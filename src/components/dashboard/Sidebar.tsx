@@ -11,12 +11,14 @@ import {
     Github,
     ChevronLeft,
     ChevronRight,
+    X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LogoMark, LogoWordmark } from "@/components/ui/Logo";
 import { AccountSwitcher } from "@/components/dashboard/AccountSwitcher";
+import { useUiStore } from "@/lib/store";
 
 const NAV = {
     Workspace: [
@@ -31,8 +33,68 @@ const NAV = {
     ],
 };
 
-export function Sidebar() {
+/**
+ * Shared nav groups. `threadId` must be unique per rendered instance -
+ * desktop and mobile sidebars are both mounted (CSS-hidden), and a shared
+ * framer-motion layoutId would make the active marker jump between them.
+ */
+function NavGroups({
+    collapsed,
+    threadId,
+    onNavigate,
+}: {
+    collapsed: boolean;
+    threadId: string;
+    onNavigate?: () => void;
+}) {
     const pathname = usePathname();
+
+    return (
+        <>
+            {Object.entries(NAV).map(([group, items]) => (
+                <div key={group} className="mb-5">
+                    {!collapsed && (
+                        <div className="micro-label px-4 mb-1.5 opacity-70">{group}</div>
+                    )}
+                    <nav className="px-2 space-y-px">
+                        {items.map((item) => {
+                            const isActive = !item.external && pathname.startsWith(item.href);
+                            return (
+                                <Link
+                                    key={item.name}
+                                    href={item.href}
+                                    target={item.external ? "_blank" : undefined}
+                                    rel={item.external ? "noopener noreferrer" : undefined}
+                                    title={collapsed ? item.name : undefined}
+                                    onClick={onNavigate}
+                                    className={cn(
+                                        "group relative flex items-center h-8 rounded-md text-[13px] transition-colors",
+                                        collapsed ? "justify-center" : "px-2.5 gap-2.5",
+                                        isActive
+                                            ? "bg-muted text-foreground font-medium"
+                                            : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                                    )}
+                                >
+                                    {/* Active marker - the warm thread */}
+                                    {isActive && (
+                                        <motion.span
+                                            layoutId={threadId}
+                                            className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 rounded-full ig-thread"
+                                        />
+                                    )}
+                                    <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-foreground" : "")} />
+                                    {!collapsed && <span className="truncate">{item.name}</span>}
+                                </Link>
+                            );
+                        })}
+                    </nav>
+                </div>
+            ))}
+        </>
+    );
+}
+
+export function Sidebar() {
     const [isCollapsed, setIsCollapsed] = useState(false);
 
     return (
@@ -73,44 +135,7 @@ export function Sidebar() {
 
             {/* Nav */}
             <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none py-4">
-                {Object.entries(NAV).map(([group, items]) => (
-                    <div key={group} className="mb-5">
-                        {!isCollapsed && (
-                            <div className="micro-label px-4 mb-1.5 opacity-70">{group}</div>
-                        )}
-                        <nav className="px-2 space-y-px">
-                            {items.map((item) => {
-                                const isActive = !item.external && pathname.startsWith(item.href);
-                                return (
-                                    <Link
-                                        key={item.name}
-                                        href={item.href}
-                                        target={item.external ? "_blank" : undefined}
-                                        rel={item.external ? "noopener noreferrer" : undefined}
-                                        title={isCollapsed ? item.name : undefined}
-                                        className={cn(
-                                            "group relative flex items-center h-8 rounded-md text-[13px] transition-colors",
-                                            isCollapsed ? "justify-center" : "px-2.5 gap-2.5",
-                                            isActive
-                                                ? "bg-muted text-foreground font-medium"
-                                                : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-                                        )}
-                                    >
-                                        {/* Active marker - the warm thread */}
-                                        {isActive && (
-                                            <motion.span
-                                                layoutId="nav-thread"
-                                                className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 rounded-full ig-thread"
-                                            />
-                                        )}
-                                        <item.icon className={cn("w-4 h-4 shrink-0", isActive ? "text-foreground" : "")} />
-                                        {!isCollapsed && <span className="truncate">{item.name}</span>}
-                                    </Link>
-                                );
-                            })}
-                        </nav>
-                    </div>
-                ))}
+                <NavGroups collapsed={isCollapsed} threadId="nav-thread-desktop" />
             </div>
 
             {/* Account switcher */}
@@ -118,5 +143,81 @@ export function Sidebar() {
                 <AccountSwitcher isCollapsed={isCollapsed} />
             </div>
         </motion.aside>
+    );
+}
+
+/**
+ * Mobile navigation drawer (< lg). Opened by the Topbar hamburger via
+ * useUiStore; closes on backdrop tap, the X button, Escape, or navigation.
+ */
+export function MobileSidebar() {
+    const isOpen = useUiStore((s) => s.mobileSidebarOpen);
+    const close = useUiStore((s) => s.closeMobileSidebar);
+    const pathname = usePathname();
+
+    // Any route change closes the drawer
+    useEffect(() => {
+        close();
+    }, [pathname, close]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        const onKey = (e: KeyboardEvent): void => {
+            if (e.key === "Escape") close();
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [isOpen, close]);
+
+    return (
+        <AnimatePresence>
+            {isOpen && (
+                <div className="lg:hidden fixed inset-0 z-50">
+                    {/* Backdrop */}
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.18 }}
+                        onClick={close}
+                        className="absolute inset-0 bg-black/45 backdrop-blur-[2px]"
+                    />
+
+                    {/* Panel */}
+                    <motion.aside
+                        initial={{ x: -280 }}
+                        animate={{ x: 0 }}
+                        exit={{ x: -280 }}
+                        transition={{ duration: 0.22, ease: "easeInOut" }}
+                        className="absolute inset-y-0 left-0 w-[260px] flex flex-col bg-background border-r border-border shadow-2xl"
+                    >
+                        {/* Brand */}
+                        <div className="h-14 flex items-center justify-between border-b border-border pl-4 pr-2">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                                <LogoMark className="w-6 h-6 shrink-0" />
+                                <LogoWordmark className="text-[13px] tracking-[0.14em]" />
+                            </div>
+                            <button
+                                onClick={close}
+                                className="p-1.5 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                                aria-label="Close menu"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        {/* Nav */}
+                        <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-none py-4">
+                            <NavGroups collapsed={false} threadId="nav-thread-mobile" onNavigate={close} />
+                        </div>
+
+                        {/* Account switcher */}
+                        <div className="border-t border-border p-2.5">
+                            <AccountSwitcher isCollapsed={false} />
+                        </div>
+                    </motion.aside>
+                </div>
+            )}
+        </AnimatePresence>
     );
 }

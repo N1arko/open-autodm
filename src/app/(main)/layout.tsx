@@ -1,4 +1,4 @@
-import { Sidebar } from "@/components/dashboard/Sidebar";
+import { Sidebar, MobileSidebar } from "@/components/dashboard/Sidebar";
 import { Topbar } from "@/components/dashboard/Topbar";
 
 export default function MainLayout({
@@ -20,6 +20,9 @@ export default function MainLayout({
 
             {/* Desktop Sidebar (Collapsible) */}
             <Sidebar />
+
+            {/* Mobile drawer (opened by the Topbar hamburger) */}
+            <MobileSidebar />
 
             {/* Main Content Area */}
             <div className="flex-1 flex flex-col overflow-hidden relative z-10">

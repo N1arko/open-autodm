@@ -54,3 +54,21 @@ export const useAccountStore = create<AccountStore>()(
     { name: 'open-autodm-active-account' }
   )
 );
+
+/**
+ * Ephemeral UI state shared across layout components - currently just the
+ * mobile navigation drawer, toggled from the Topbar hamburger and rendered
+ * by MobileSidebar. Not persisted on purpose.
+ */
+
+interface UiStore {
+  mobileSidebarOpen: boolean;
+  openMobileSidebar: () => void;
+  closeMobileSidebar: () => void;
+}
+
+export const useUiStore = create<UiStore>((set) => ({
+  mobileSidebarOpen: false,
+  openMobileSidebar: () => set({ mobileSidebarOpen: true }),
+  closeMobileSidebar: () => set({ mobileSidebarOpen: false }),
+}));

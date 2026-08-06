@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { Bot, Send, Instagram, Wrench, CheckCircle2, Circle, ArrowRight, Plus } from "lucide-react";
+import { useMemo } from "react";
+import { Bot, Send, Instagram, MessageCircle, Wrench, CheckCircle2, Circle, ArrowRight, Plus } from "lucide-react";
 import { useAutomations } from "@/hooks/useAutomations";
 import { useContacts } from "@/hooks/useContacts";
+import { useAnalytics } from "@/hooks/useAnalytics";
 import { useActiveAccount } from "@/hooks/useActiveAccount";
 import { useSetupStatus } from "@/hooks/useSetup";
 import { cn } from "@/lib/utils";
@@ -13,6 +15,16 @@ export default function DashboardPage() {
     const { data: automations } = useAutomations(accountId);
     const { data: setup } = useSetupStatus();
     const { data: contacts } = useContacts(accountId);
+
+    // Fixed 30-day window, computed once per mount so the query key stays stable
+    const analyticsRange = useMemo(() => {
+        const now = Date.now();
+        return {
+            from: new Date(now - 30 * 86400_000).toISOString(),
+            to: new Date(now).toISOString(),
+        };
+    }, []);
+    const { data: analytics } = useAnalytics({ ...analyticsRange, automationId: "all", accountId });
 
     const activeCount = automations?.filter(a => a.is_active).length ?? 0;
     const totalDms = automations?.reduce((sum, a) => sum + a.total_dms_sent, 0) ?? 0;
@@ -27,6 +39,7 @@ export default function DashboardPage() {
 
     const stats = [
         { label: "Active automations", value: String(activeCount), icon: Bot },
+        { label: "Comments · 30d", value: (analytics?.totals.comments ?? 0).toLocaleString(), icon: MessageCircle },
         { label: "DMs delivered", value: totalDms.toLocaleString(), icon: Send },
         { label: "Contacts captured", value: String(contacts?.length ?? 0), icon: Instagram },
     ];
@@ -54,7 +67,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 {stats.map((stat) => (
                     <div key={stat.label} className="bg-card border border-border rounded-xl p-4">
                         <div className="flex items-center justify-between">
