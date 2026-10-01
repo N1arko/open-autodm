@@ -88,17 +88,23 @@ export async function exchangeCodeForToken(
         'If Meta says "redirect_uri not identical", double-check your App Secret - a wrong secret produces this exact misleading error.'
     );
   }
-  return (await res.json()) as IgShortLivedTokenResponse;
+  // Meta returns either a flat object or one wrapped in `data: [ ... ]`
+  const json = (await res.json()) as IgShortLivedTokenResponse | { data?: IgShortLivedTokenResponse[] };
+  const token = 'data' in json && Array.isArray(json.data) ? json.data[0] : (json as IgShortLivedTokenResponse);
+  if (!token?.access_token) {
+    throw new Error(`Instagram token exchange returned no access_token: ${JSON.stringify(json)}`);
+  }
+  return token;
 }
 
 export async function exchangeForLongLivedToken(
   shortLivedToken: string,
-  appId: string,
   appSecret: string
 ): Promise<IgLongLivedTokenResponse> {
+  // Only grant_type, client_secret and access_token are accepted here -
+  // extra params (e.g. client_id) make Meta reject the GET as unsupported.
   const params = new URLSearchParams({
     grant_type: 'ig_exchange_token',
-    client_id: appId,
     client_secret: appSecret,
     access_token: shortLivedToken,
   });

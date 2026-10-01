@@ -63,7 +63,7 @@ export async function GET(request: Request): Promise<Response> {
 
     debugLog('oauth', 'info', 'oauth_exchange', 'processing', 'Exchanging authorization code for tokens', { userId });
     const shortLived = await exchangeCodeForToken(code, settings.metaAppId, settings.metaAppSecret, redirectUri);
-    const longLived = await exchangeForLongLivedToken(shortLived.access_token, settings.metaAppId, settings.metaAppSecret);
+    const longLived = await exchangeForLongLivedToken(shortLived.access_token, settings.metaAppSecret);
     const profile = await getInstagramProfile(longLived.access_token);
 
     const env = getEnv();
