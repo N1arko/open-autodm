@@ -53,6 +53,7 @@ function SettingsContent() {
                 setup_required: "Save your Meta app credentials in the Setup Wizard first.",
                 server_error: "Something went wrong. Check the details and try again.",
                 invalid_callback: "Invalid callback. Try again.",
+                test_user_required: "Add this Instagram account as a test user to use the automation tool. In your Meta app, go to App Roles > Roles > Add People > Instagram Tester, then accept the invite in Instagram (Settings > Apps and websites > Tester invites) and connect again.",
             };
             const debugDetail = searchParams.get("debug");
             setBanner({

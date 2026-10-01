@@ -110,6 +110,11 @@ export async function GET(request: Request): Promise<Response> {
     const message = describeError(err);
     logger.error({ err, userId }, 'Instagram OAuth callback failed');
     debugLog('oauth', 'error', 'oauth_failed', 'error', `OAuth exchange failed: ${message.slice(0, 300)}`, { userId });
+    // While the Meta app is in Development mode, an Instagram account that
+    // isn't an accepted tester fails the long-lived exchange with this error.
+    if (message.includes('Unsupported request - method type: get')) {
+      return settingsRedirect('instagram_error=test_user_required');
+    }
     return settingsRedirect(`instagram_error=server_error&debug=${encodeURIComponent(message.slice(0, 200))}`);
   }
 }
