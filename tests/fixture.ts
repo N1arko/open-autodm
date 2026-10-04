@@ -139,6 +139,13 @@ export function restFixture(
         json(res, { message: "forbidden" }, 403);
         return;
       }
+      if (url.pathname.startsWith("/auth/v1/admin/users/")) {
+        const uid = url.pathname.split("/").at(-1)!;
+        const exists = Object.values(users).includes(uid);
+        json(res, exists ? { user: { id: uid, email: "fixture@example.invalid" } }
+          : { message: "User not found", code: "user_not_found" }, exists ? 200 : 404);
+        return;
+      }
       if (url.pathname.startsWith("/rest/v1/rpc/")) {
         const name = url.pathname.split("/").at(-1)!;
         const args = JSON.parse(await body(req));

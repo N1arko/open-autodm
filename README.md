@@ -182,4 +182,4 @@ Built with ❤️ by <a href="https://www.instagram.com/buildwharsha/"><b>@build
 
 ## External bot transport (fork)
 
-This fork adds an account-scoped webhook and reply API for external bots. See [API contract](docs/BOT_API.md) and [VPS deployment](docs/DEPLOYMENT.md). Bot logic and LLM calls run in your own backend. The existing Instagram connection and automation UI remains available.
+This fork adds an account-scoped webhook and reply API for external bots. See [API contract](docs/BOT_API.md), [headless agent management](docs/AGENT_API.md) and [VPS deployment](docs/DEPLOYMENT.md). Bot logic and LLM calls run in your own backend. The existing Instagram connection and automation UI remains available.

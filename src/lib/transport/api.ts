@@ -222,6 +222,22 @@ export function rotateCredentials(id: string) {
     return respond({ ...data, ...keys });
   });
 }
+export function getAccountIntegration(id: string) {
+  return apiRoute(async (request) => {
+    const user = await owner(request);
+    if (!uuid.safeParse(id).success) throw new ApiError(404, "not_found");
+    const db = createServiceClient();
+    const { data: account, error: accountError } = await db
+      .from("instagram_accounts").select("id")
+      .eq("id", id).eq("user_id", user).maybeSingle();
+    if (accountError) throw new Error("db_unavailable");
+    if (!account) throw new ApiError(404, "not_found");
+    const { data, error } = await db.from("account_bot_bindings")
+      .select("account_id,integration_id,revision").eq("account_id", id).maybeSingle();
+    if (error) throw new Error("db_unavailable");
+    return respond(data ?? { account_id: id, integration_id: null, revision: 0 });
+  });
+}
 export function bindAccount(id: string, detach = false) {
   return apiRoute(async (request) => {
     const user = await owner(request);

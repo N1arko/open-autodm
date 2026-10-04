@@ -6,7 +6,7 @@
 
 ## Регистрация и привязка
 
-Управляющие запросы используют `Authorization: Bearer <Supabase user access_token>`. Это токен владельца из авторизованной сессии, а не publishable/secret key проекта. Ответы API имеют `Cache-Control: no-store`.
+Управляющие запросы используют `Authorization: Bearer <Supabase user access_token>` либо постоянный ключ владельца `adm_…`, если он настроен на сервере. Порядок управления без панели описан в [AGENT_API.md](AGENT_API.md). Ответы API имеют `Cache-Control: no-store`.
 
 ```http
 POST /api/v1/integrations
@@ -33,6 +33,7 @@ Authorization: Bearer <owner JWT>
 | Метод и путь                                 | Назначение                                             |
 | -------------------------------------------- | ------------------------------------------------------ |
 | `GET /api/v1/integrations?cursor=<UUID>`     | Список владельца, до 50 строк и `next_cursor`          |
+| `GET /api/v1/accounts/<id>/integration`     | Текущая привязка аккаунта и её ревизия                 |
 | `PATCH /api/v1/integrations/<id>`            | `name`, `webhook_url`, `enabled`                       |
 | `POST /api/v1/integrations/<id>/credentials` | Выпустить новую пару секретов, аннулировать предыдущую |
 | `PATCH /api/v1/conversations/<id>`           | `{"paused":true}` или `{"paused":false}`               |

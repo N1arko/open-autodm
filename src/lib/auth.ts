@@ -1,11 +1,13 @@
 /**
  * Route-handler authentication.
  *
- * The user's identity ALWAYS comes from a verified Supabase JWT - never from
- * the request body or URL params. Two accepted transports:
+ * Identity comes from verified Supabase auth or an optional deployment-bound
+ * owner API token. Never accept an identity from request body or URL params.
+ * Accepted transports:
  *   1. Authorization: Bearer <jwt>  (used by the in-app API client)
  *   2. Supabase session cookies     (used by top-level browser navigations,
  *      e.g. the OAuth connect redirect)
+ *   3. Authorization: Bearer <adm_...> (headless owner management)
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -13,6 +15,8 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { getEnv } from "@/lib/env";
 import { isOwnerAllowed } from "@/lib/access";
+import { ownerIdForApiToken } from "@/lib/ownerApiToken";
+import { createServiceClient } from "@/lib/supabase/service";
 
 export interface AuthenticatedUser {
   id: string;
@@ -27,6 +31,13 @@ export async function getAuthenticatedUser(
   const authHeader = request.headers.get("authorization");
   if (authHeader?.startsWith("Bearer ")) {
     const jwt = authHeader.slice(7);
+    if (jwt.startsWith("adm_")) {
+      const userId = ownerIdForApiToken(jwt);
+      if (!userId) return null;
+      const { data, error } = await createServiceClient().auth.admin.getUserById(userId);
+      if (error || !data.user || !isOwnerAllowed(data.user.email)) return null;
+      return { id: data.user.id, email: data.user.email };
+    }
     const supabase = createClient(
       env.NEXT_PUBLIC_SUPABASE_URL,
       env.NEXT_PUBLIC_SUPABASE_ANON_KEY,

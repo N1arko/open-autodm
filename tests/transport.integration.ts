@@ -19,6 +19,7 @@ import {
   createIntegration,
   listIntegrations,
   bindAccount,
+  getAccountIntegration,
   pauseConversation,
   sendMessage,
   getMessage,
@@ -228,6 +229,54 @@ test("real API registers scoped credentials and enforces owner/token isolation",
       .status,
     401,
   );
+});
+
+test("headless owner credential preserves ownership and rejects disallowed or deleted owners", async () => {
+  const token = `adm_${"c".repeat(64)}`;
+  const previous = {
+    hash: process.env.OWNER_API_TOKEN_HASH,
+    user: process.env.OWNER_API_USER_ID,
+    emails: process.env.APP_OWNER_EMAILS,
+  };
+  try {
+    process.env.OWNER_API_TOKEN_HASH = hash(token);
+    process.env.OWNER_API_USER_ID = owner;
+    process.env.APP_OWNER_EMAILS = "fixture@example.invalid";
+    const response = await createIntegration(req("POST", "/integrations", {
+      name: "Headless agent", webhook_url: `${api}/events`,
+    }, token));
+    assert.equal(response.status, 201);
+    const created = await response.json();
+    const row = (await db.pool.query("SELECT user_id FROM bot_integrations WHERE id=$1", [created.id])).rows[0];
+    assert.equal(row.user_id, owner);
+    assert.equal((await listIntegrations(req("GET", "/integrations", undefined, `adm_${"d".repeat(64)}`))).status, 401);
+    assert.equal((await bindAccount(account)(req("PUT", "/bind", {integration_id: integration}, token))).status, 200);
+    const binding = await getAccountIntegration(account)(req("GET", "/bind", undefined, token));
+    assert.equal(binding.status, 200);
+    assert.equal((await binding.json()).integration_id, integration);
+    process.env.OWNER_API_USER_ID = other;
+    assert.equal((await bindAccount(account)(req("PUT", "/bind", {integration_id: integration}, token))).status, 404);
+    assert.equal((await getAccountIntegration(account)(req("GET", "/bind", undefined, token))).status, 404);
+    process.env.OWNER_API_USER_ID = owner;
+    await db.pool.query("DELETE FROM account_bot_bindings WHERE account_id=$1", [account]);
+    const detached = await getAccountIntegration(account)(req("GET", "/bind", undefined, token));
+    assert.deepEqual(await detached.json(), { account_id: account, integration_id: null, revision: 0 });
+    process.env.APP_OWNER_EMAILS = "different@example.invalid";
+    assert.equal((await listIntegrations(req("GET", "/integrations", undefined, token))).status, 401);
+    process.env.APP_OWNER_EMAILS = "fixture@example.invalid";
+    process.env.OWNER_API_USER_ID = randomUUID();
+    assert.equal((await listIntegrations(req("GET", "/integrations", undefined, token))).status, 401);
+    // The management credential is not an integration's outgoing-message credential.
+    assert.equal((await sendMessage(req("POST", "/messages", {}, token, "x"))).status, 401);
+  } finally {
+    for (const [key, value] of Object.entries({
+      OWNER_API_TOKEN_HASH: previous.hash,
+      OWNER_API_USER_ID: previous.user,
+      APP_OWNER_EMAILS: previous.emails,
+    })) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
 });
 
 test("complete durable inbox → production routing → signed HTTP bot → reply API → fake Meta exchange", async () => {

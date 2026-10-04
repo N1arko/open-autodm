@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
+import { ownerIdForApiToken } from "../src/lib/ownerApiToken";
 import {
   publicAddress,
   resolveEndpoint,
@@ -110,5 +112,31 @@ test("configured panel owners are enforced independently of integration tokens",
   } finally {
     if (prior === undefined) delete process.env.APP_OWNER_EMAILS;
     else process.env.APP_OWNER_EMAILS = prior;
+  }
+});
+
+test("headless management token requires a matching hash and configured owner", () => {
+  const previousHash = process.env.OWNER_API_TOKEN_HASH;
+  const previousOwner = process.env.OWNER_API_USER_ID;
+  const token = `adm_${"c".repeat(64)}`;
+  const owner = "11111111-1111-4111-8111-111111111111";
+  try {
+    delete process.env.OWNER_API_TOKEN_HASH;
+    assert.equal(ownerIdForApiToken(token), null);
+    process.env.OWNER_API_TOKEN_HASH = createHash("sha256").update(token).digest("hex");
+    process.env.OWNER_API_USER_ID = owner;
+    assert.equal(ownerIdForApiToken(token), owner);
+    assert.equal(ownerIdForApiToken(`adm_${"d".repeat(64)}`), null);
+    assert.equal(ownerIdForApiToken(`bot_${"c".repeat(64)}`), null);
+    process.env.OWNER_API_TOKEN_HASH = "malformed";
+    assert.equal(ownerIdForApiToken(token), null);
+    process.env.OWNER_API_TOKEN_HASH = createHash("sha256").update(token).digest("hex");
+    process.env.OWNER_API_USER_ID = "not-a-user-id";
+    assert.equal(ownerIdForApiToken(token), null);
+  } finally {
+    if (previousHash === undefined) delete process.env.OWNER_API_TOKEN_HASH;
+    else process.env.OWNER_API_TOKEN_HASH = previousHash;
+    if (previousOwner === undefined) delete process.env.OWNER_API_USER_ID;
+    else process.env.OWNER_API_USER_ID = previousOwner;
   }
 });
