@@ -14,7 +14,7 @@
     "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "worker": "tsx scripts/worker.ts",
     "test": "tsx --test tests/*.test.ts",
-    "test:integration": "tsx --test tests/transport.integration.ts",
+    "test:integration": "tsx --test tests/*.integration.ts",
     "bot:example": "tsx scripts/echo-bot.ts",
     "migrate": "tsx --env-file=.env.local scripts/migrate.ts"
   },

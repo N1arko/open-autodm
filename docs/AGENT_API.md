@@ -64,6 +64,12 @@ One integration can serve multiple Instagram accounts. An account has at most on
 
 The signed event, asynchronous reply API, idempotency and delivery states are documented in [BOT_API.md](BOT_API.md). This release transports text DMs and text story replies. Model selection, prompts, debounce and AI history are configured in the external bot. The core service has no API for those external settings.
 
+## Publish Reels
+
+Use the same owner credential for `POST /api/v1/publications`, `GET /api/v1/publications`, and `GET`/`DELETE /api/v1/publications/{id}`. The API accepts a video URL, caption, account UUID and optional scheduled timestamp, returning a durable job and then the media ID/permalink. Generate account authorization with `GET /api/instagram/connect?publishing=true` to request the additional publishing permission.
+
+See [PUBLISHING_API.md](PUBLISHING_API.md) for scheduling, cancellation, idempotency and uncertain publication outcomes. A queued job is not a published post. Never repeat `publication_unknown` without checking Instagram.
+
 ## Minimal client
 
 Provide the secret through the agent's credential store/environment, then call the API:
