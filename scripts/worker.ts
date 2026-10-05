@@ -2,6 +2,7 @@ import { processTransportJobs } from "../src/lib/transport/worker";
 import { processDueJobs } from "../src/lib/automation/engine";
 import { POST as maintenance } from "../src/app/api/cron/process-jobs/route";
 import { getEnv } from "../src/lib/env";
+import { processPublicationJobs } from "../src/lib/publishing/worker";
 
 let stopping = false;
 process.on("SIGTERM", () => {
@@ -46,9 +47,22 @@ async function legacyLoop() {
     if (!stopping) await sleep(2000);
   }
 }
+async function publishingLoop() {
+  while (!stopping) {
+    let claimed = 0;
+    try {
+      claimed = await processPublicationJobs(4);
+    } catch {
+      console.error(
+        JSON.stringify({ scope: "worker", error: "publishing_unavailable" }),
+      );
+    }
+    if (!stopping) await sleep(claimed ? 200 : 2000);
+  }
+}
 async function main() {
   getEnv();
-  await Promise.all([transportLoop(), legacyLoop()]);
+  await Promise.all([transportLoop(), legacyLoop(), publishingLoop()]);
 }
 main().catch(() => {
   console.error("Worker configuration invalid");

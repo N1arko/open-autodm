@@ -14,6 +14,10 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: Request): Promise<Response> {
   const user = await getAuthenticatedUser(request);
   if (!user) return unauthorized();
+  const publishing = new URL(request.url).searchParams.get('publishing');
+  if (publishing !== null && publishing !== 'true' && publishing !== 'false') {
+    return Response.json({ error: 'invalid_publishing_option' }, { status: 400 });
+  }
 
   const settings = await getMetaSettings();
   if (!settings) {
@@ -25,7 +29,7 @@ export async function GET(request: Request): Promise<Response> {
 
   const state = await signOAuthState(user.id);
   const redirectUri = `${getAppUrl(request)}/api/instagram/callback`;
-  const url = buildOAuthUrl(settings.metaAppId, redirectUri, state);
+  const url = buildOAuthUrl(settings.metaAppId, redirectUri, state, publishing === 'true');
 
   return Response.json({ url });
 }

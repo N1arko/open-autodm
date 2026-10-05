@@ -14,6 +14,7 @@
 
 import { processDueJobs } from '@/lib/automation/engine';
 import { processTransportJobs } from '@/lib/transport/worker';
+import { processPublicationJobs } from '@/lib/publishing/worker';
 import { createServiceClient } from '@/lib/supabase/service';
 import { refreshLongLivedToken } from '@/lib/instagram/oauth';
 import { decrypt, encrypt, safeCompare } from '@/lib/crypto';
@@ -86,6 +87,7 @@ async function handle(request: Request): Promise<Response> {
   }
 
   const transport = await processTransportJobs(16);
+  const publications = await processPublicationJobs(4);
   const drain = await processDueJobs(25);
   const tokensRefreshed = await refreshExpiringTokens();
 
@@ -97,6 +99,7 @@ async function handle(request: Request): Promise<Response> {
   return Response.json({
     ok: true,
     transportClaimed: transport,
+    publicationsClaimed: publications,
     jobs: drain,
     tokensRefreshed,
     at: new Date().toISOString(),
