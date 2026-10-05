@@ -3,6 +3,7 @@ import { processDueJobs } from "../src/lib/automation/engine";
 import { POST as maintenance } from "../src/app/api/cron/process-jobs/route";
 import { getEnv } from "../src/lib/env";
 import { processPublicationJobs } from "../src/lib/publishing/worker";
+import { processInsightsJobs } from "../src/lib/insights/worker";
 
 let stopping = false;
 process.on("SIGTERM", () => {
@@ -62,7 +63,28 @@ async function publishingLoop() {
 }
 async function main() {
   getEnv();
-  await Promise.all([transportLoop(), legacyLoop(), publishingLoop()]);
+  await Promise.all([
+    transportLoop(),
+    legacyLoop(),
+    publishingLoop(),
+    insightsLoop(),
+  ]);
+}
+async function insightsLoop() {
+  let nextPoll = 0;
+  while (!stopping) {
+    let claimed = 0;
+    try {
+      if (Date.now() >= nextPoll) claimed = await processInsightsJobs(2);
+    } catch {
+      console.error(
+        JSON.stringify({ scope: "worker", error: "insights_unavailable" }),
+      );
+    }
+    if (Date.now() >= nextPoll)
+      nextPoll = Date.now() + (claimed ? 200 : 60_000);
+    if (!stopping) await sleep(claimed ? 200 : 2000);
+  }
 }
 main().catch(() => {
   console.error("Worker configuration invalid");

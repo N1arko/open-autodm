@@ -15,6 +15,10 @@ export async function GET(request: Request): Promise<Response> {
   const user = await getAuthenticatedUser(request);
   if (!user) return unauthorized();
   const publishing = new URL(request.url).searchParams.get('publishing');
+  const insights = new URL(request.url).searchParams.get('insights');
+  if (insights !== null && insights !== 'true' && insights !== 'false') {
+    return Response.json({ error: 'invalid_insights_option' }, { status: 400 });
+  }
   if (publishing !== null && publishing !== 'true' && publishing !== 'false') {
     return Response.json({ error: 'invalid_publishing_option' }, { status: 400 });
   }
@@ -29,7 +33,7 @@ export async function GET(request: Request): Promise<Response> {
 
   const state = await signOAuthState(user.id);
   const redirectUri = `${getAppUrl(request)}/api/instagram/callback`;
-  const url = buildOAuthUrl(settings.metaAppId, redirectUri, state, publishing === 'true');
+  const url = buildOAuthUrl(settings.metaAppId, redirectUri, state, publishing === 'true', insights === 'true');
 
   return Response.json({ url });
 }

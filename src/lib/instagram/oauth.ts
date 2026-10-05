@@ -31,6 +31,7 @@ export const REQUIRED_SCOPES = [
   'instagram_business_manage_comments',
 ].join(',');
 export const PUBLISHING_SCOPE = 'instagram_business_content_publish';
+export const INSIGHTS_SCOPE = 'instagram_business_manage_insights';
 
 // ── CSRF state JWT ──────────────────────────────────────────────────────────
 
@@ -56,11 +57,15 @@ export async function verifyOAuthState(token: string): Promise<{ userId: string 
 
 // ── OAuth URL + token exchange ──────────────────────────────────────────────
 
-export function buildOAuthUrl(appId: string, redirectUri: string, state: string, publishing = false): string {
+export function buildOAuthUrl(appId: string, redirectUri: string, state: string, publishing = false, insights = false): string {
   const params = new URLSearchParams({
     client_id: appId,
     redirect_uri: redirectUri,
-    scope: publishing ? `${REQUIRED_SCOPES},${PUBLISHING_SCOPE}` : REQUIRED_SCOPES,
+    scope: [
+      REQUIRED_SCOPES,
+      ...(publishing ? [PUBLISHING_SCOPE] : []),
+      ...(insights ? [INSIGHTS_SCOPE] : []),
+    ].join(','),
     response_type: 'code',
     state,
   });
