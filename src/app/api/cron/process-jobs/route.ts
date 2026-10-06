@@ -96,6 +96,7 @@ async function handle(request: Request): Promise<Response> {
   if (cleanupError) logger.warn({ err: cleanupError }, 'cleanup_old_rows failed');
 
   await db.rpc('transport_cleanup');
+  await db.rpc('insights_cleanup');
   return Response.json({
     ok: true,
     transportClaimed: transport,

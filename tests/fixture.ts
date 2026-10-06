@@ -8,7 +8,9 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { Pool } from "pg";
+import { Pool, types } from "pg";
+// PostgREST represents SQL date as YYYY-MM-DD, without a timezone conversion.
+types.setTypeParser(1082, (value) => value);
 import type { TransportStore } from "../src/lib/transport/store";
 
 export async function listen(server: Server) {

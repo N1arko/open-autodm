@@ -70,6 +70,10 @@ Use the same owner credential for `POST /api/v1/publications`, `GET /api/v1/publ
 
 See [PUBLISHING_API.md](PUBLISHING_API.md) for scheduling, cancellation, idempotency and uncertain publication outcomes. A queued job is not a published post. Never repeat `publication_unknown` without checking Instagram.
 
+## Instagram Insights
+
+Use the same owner credential to read account/media metrics, audience breakdowns and saved observation history. Configure opt-in daily collection per account through `PUT /api/v1/accounts/{id}/insights/settings`. Generate additional consent with `GET /api/instagram/connect?insights=true`; combine with `publishing=true` when both are needed. See [INSIGHTS_API.md](INSIGHTS_API.md) for endpoints, dates, metric availability and comparison of snapshots.
+
 ## Minimal client
 
 Provide the secret through the agent's credential store/environment, then call the API:

@@ -7,6 +7,8 @@ export async function GET() {
     const checks = await Promise.all([
       db.from("bot_transport_jobs").select("id").limit(0),
       db.from("instagram_publications").select("id").limit(0),
+      db.from("instagram_insights_snapshots").select("id").limit(0),
+      db.from("instagram_insights_settings").select("account_id").limit(0),
     ]);
     const error = checks.some((check) => check.error);
     return Response.json(
