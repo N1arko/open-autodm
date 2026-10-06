@@ -15,6 +15,7 @@ interface Publication {
   status: string;
   account_id: string;
   video_url: string;
+  cover_url: string | null;
   caption: string;
   share_to_feed: boolean;
   container_id: string | null;
@@ -78,19 +79,25 @@ async function run(
   }
   if (!p.container_id) {
     let container: string;
+    let urlError = "invalid_video_url";
     try {
       await ports.validateVideo(p.video_url);
+      if (p.cover_url) {
+        urlError = "invalid_cover_url";
+        await ports.validateVideo(p.cover_url);
+      }
       container = await ports.meta.create(
         context.account.instagram_user_id,
         p.video_url,
         p.caption,
         p.share_to_feed,
         token,
+        p.cover_url ?? undefined,
       );
     } catch (error) {
       const meta = error instanceof PublishingMetaError ? error : null;
       await finish(meta?.retryable ? "processing" : "failed", {
-        p_error: meta?.code ?? "invalid_video_url",
+        p_error: meta?.code ?? urlError,
         p_delay: Math.min(900, 15 * 2 ** Math.min(p.attempts, 6)),
       });
       return;

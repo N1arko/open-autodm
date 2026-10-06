@@ -14,6 +14,7 @@ export interface PublishingMeta {
     caption: string,
     feed: boolean,
     token: string,
+    cover?: string,
   ): Promise<string>;
   status(container: string, token: string): Promise<string>;
   publish(account: string, container: string, token: string): Promise<string>;
@@ -76,8 +77,7 @@ export function publishingMeta(
     }
     if (!response.ok || data.error) {
       const error = data.error as
-        | { code?: number; is_transient?: boolean }
-        | undefined;
+        { code?: number; is_transient?: boolean } | undefined;
       const code = Number.isInteger(error?.code) ? error!.code : 0;
       const rejected =
         response.status >= 400 && response.status < 500 && !!error;
@@ -98,13 +98,14 @@ export function publishingMeta(
     return data.id;
   };
   return {
-    async create(account, video, caption, feed, token) {
+    async create(account, video, caption, feed, token, cover) {
       return id(
         await call(`${account}/media`, token, {
           media_type: "REELS",
           video_url: video,
           caption,
           share_to_feed: String(feed),
+          ...(cover ? { cover_url: cover } : {}),
         }),
       );
     },
