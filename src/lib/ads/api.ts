@@ -34,14 +34,14 @@ export const connectAdsAccount = (ports = defaultAdsPorts) =>
     );
     const p = ports(),
       metadata = await verify(input.ad_account_id, input.access_token, p);
-    const row = await p.store.rpc("ads_connect", {
+    const row = await p.store.rpc<{ capabilities: { read: boolean; manage: boolean } }>("ads_connect", {
       p_user: user,
       p_meta_id: input.ad_account_id,
       p_token: ciphertext(input.access_token, p),
       p_metadata: metadata,
     });
     return respond(
-      { account: row, capabilities: { read: true, manage: false } },
+      { account: row, capabilities: row.capabilities },
       201,
     );
   });

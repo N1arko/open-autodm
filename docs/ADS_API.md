@@ -1,6 +1,6 @@
-# Meta advertising API — read-only first release
+# Meta advertising API — connections and reporting
 
-This module connects independently authorized Facebook ad accounts to the existing owner API. It uses the Meta Marketing API (`graph.facebook.com/v26.0`), independently of Instagram Login tokens. No endpoint in this release creates, activates, pauses or edits advertising. Every upstream request is GET. An external agent chooses analysis and reporting; the service supplies account-scoped data.
+This module connects independently authorized Facebook ad accounts to the existing owner API. It uses the Meta Marketing API (`graph.facebook.com/v26.0`), independently of Instagram Login tokens. This document covers connections and reporting, whose upstream requests are GET. Campaign/ad management is described in [ADS_MANAGEMENT_API.md](ADS_MANAGEMENT_API.md) and requires separate Meta authorization and per-account management settings. An external agent chooses actions and reporting; the service supplies account-scoped operations.
 
 ## Authentication and account connection
 
@@ -39,7 +39,7 @@ All paths start with `/api/v1/ads/accounts`.
 | GET `/{id}/instagram-accounts` | Instagram advertising identities accessible through this ad account                        |
 | GET `/{id}/insights`           | Spend, impressions, reach, clicks, CTR/CPC/CPM/frequency and available actions/video plays |
 
-`enabled:false` blocks subsequent provider reads; it does not pause ads in Meta. Failed token replacement preserves the existing connection. It can still be inspected while disabled. Metadata on GET `/{id}` is from the last token verification; use `status?refresh=true` to inspect current Meta metadata. This release supports neither connection deletion nor advertising writes.
+`enabled:false` blocks subsequent provider reads and writes; it does not pause ads in Meta. Failed token replacement preserves the existing connection. It can still be inspected while disabled. Metadata on GET `/{id}` is from the last token verification; use `status?refresh=true` to inspect current Meta metadata. Connection deletion is not implemented. `capabilities.manage` reflects the service management switch; Meta must also authorize the token, and budget limits govern spend-related operations.
 
 The account profile omits business portfolio expansion, which requires `business_management`. Availability of `instagram-accounts` depends on account assets and token access. A denied Meta edge remains an error; the service does not substitute Instagram Login accounts or treat a rejected request as an empty list.
 

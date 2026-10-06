@@ -76,7 +76,7 @@ Use the same owner credential to read account/media metrics, audience breakdowns
 
 ## Meta advertising accounts
 
-The owner API can connect Meta Marketing API credentials and read advertising account status, campaigns, ad sets, ads, advertising Instagram identities and Insights. Connect through `POST /api/v1/ads/accounts`; use the returned internal UUID on subsequent requests. These tokens and IDs are independent of Instagram Login. This first release is read-only: service enable/disable controls data reads, and no operation changes advertising or spends budget. See [ADS_API.md](ADS_API.md) for credentials, dates, attribution, pagination and cache semantics.
+The owner API can connect Meta Marketing API credentials and read advertising account status, campaigns, ad sets, ads, advertising Instagram identities and Insights. Connect through `POST /api/v1/ads/accounts`; use the returned internal UUID on subsequent requests. These tokens and IDs are independent of Instagram Login. Read endpoints are described in [ADS_API.md](ADS_API.md). Separately authorized management supports paused campaign/ad-set/ad creation, image/video and existing-post creatives, activation, pausing and budget/targeting/creative changes through a durable plan/execute API. See [ADS_MANAGEMENT_API.md](ADS_MANAGEMENT_API.md) for per-account enablement, budget limits, idempotency and uncertain-result handling.
 
 ## Minimal client
 

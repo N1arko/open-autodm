@@ -74,6 +74,7 @@ export function apiRoute(fn: (request: Request) => Promise<Response>) {
           idempotency_conflict: 409,
           conversation_paused: 409,
           window_closed: 409,
+          operation_in_progress: 409,
         } as Record<string, number>
       )[message];
       return Response.json(

@@ -27,6 +27,7 @@ export interface AdsAccount {
   verified_at: string;
   created_at: string;
   updated_at: string;
+  management_enabled?: boolean;
 }
 export async function account(user: string, id: string, p: AdsPorts) {
   if (!z.string().uuid().safeParse(id).success)
@@ -42,7 +43,7 @@ export function visible(a: AdsAccount) {
   const { user_id: _user, access_token_encrypted: _token, ...publicData } = a;
   return {
     ...publicData,
-    capabilities: { read: true, manage: false },
+    capabilities: { read: true, manage: a.management_enabled ?? false },
     credential_expiry: "not_inspected",
   };
 }
