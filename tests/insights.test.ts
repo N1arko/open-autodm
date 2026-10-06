@@ -136,3 +136,41 @@ test("empty and malformed provider values, oversized responses and missing media
     message: "media_not_found",
   });
 });
+
+test("different Instagram owner IDs require the token to prove both account identities", async () => {
+  for (const owner of ["789", { id: "789" }]) {
+    for (const identity of [
+      { id: "789", user_id: "123" },
+      { id: "789", user_id: "999" },
+      { id: "999", user_id: "123" },
+      { id: "789" },
+    ]) {
+      const paths: string[] = [];
+      const meta = insightsMeta(async (input, init) => {
+        const url = new URL(String(input));
+        paths.push(url.pathname);
+        assert.equal(
+          new Headers(init?.headers).get("authorization"),
+          "Bearer token",
+        );
+        if (url.pathname.endsWith("/me")) {
+          assert.equal(url.searchParams.get("fields"), "id,user_id");
+          return response(identity);
+        }
+        return response({
+          id: "456",
+          owner,
+          media_type: "VIDEO",
+          timestamp: new Date().toISOString(),
+        });
+      });
+      if (identity.id === "789" && identity.user_id === "123")
+        assert.equal((await meta.media("123", "456", "token")).id, "456");
+      else
+        await assert.rejects(() => meta.media("123", "456", "token"), {
+          message: "media_not_found",
+        });
+      assert.deepEqual(paths, ["/v26.0/456", "/v26.0/me"]);
+    }
+  }
+});

@@ -245,8 +245,15 @@ export function insightsMeta(
         typeof parsed.data.owner === "string"
           ? parsed.data.owner
           : parsed.data.owner?.id;
-      if (owner !== account || parsed.data.id !== id)
+      if (!owner || !/^\d{1,30}$/.test(owner) || parsed.data.id !== id)
         throw new ApiError(404, "media_not_found");
+      if (owner !== account) {
+        // Instagram Login can return an API-scoped owner.id while OAuth's
+        // user_id is the account ID we store. Prove both belong to this token.
+        const identity = await call("me", token, { fields: "id,user_id" });
+        if (identity.user_id !== account || identity.id !== owner)
+          throw new ApiError(404, "media_not_found");
+      }
       return parsed.data;
     },
     async list(account, token, limit, after) {

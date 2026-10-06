@@ -33,7 +33,8 @@ let db: Awaited<ReturnType<typeof databaseFixture>>,
 const owner = randomUUID(),
   other = randomUUID(),
   key = "cd".repeat(32),
-  ig = "17840001";
+  ig = "17840001",
+  apiScopedIg = "39160001";
 let mode = "ok",
   calls = 0,
   viewValue = 120,
@@ -110,6 +111,13 @@ before(async () => {
       );
     if (mode === "rate") return json(response, { error: { code: 4 } }, 429);
     if (mode === "failure") return json(response, { error: { code: 2 } }, 500);
+    const scopedOwner =
+      mode === "api_scoped_owner" || mode === "other_token_identity";
+    if (u.pathname.endsWith("/me"))
+      return json(response, {
+        id: scopedOwner ? apiScopedIg : ig,
+        user_id: mode === "other_token_identity" ? "999" : ig,
+      });
     if (u.pathname.endsWith("/media"))
       return json(response, {
         data: [
@@ -161,7 +169,11 @@ before(async () => {
     if (/\/(99001|99002|99899)$/.test(u.pathname))
       return json(response, {
         id: u.pathname.split("/").at(-1),
-        owner: { id: u.pathname.endsWith("/99899") ? "999" : ig },
+        owner: {
+          id: u.pathname.endsWith("/99899")
+            ? "999"
+            : scopedOwner ? apiScopedIg : ig,
+        },
         media_type: u.pathname.endsWith("99002") ? "IMAGE" : "VIDEO",
         timestamp: new Date().toISOString(),
         permalink: "https://www.instagram.com/reel/test/",
@@ -247,7 +259,7 @@ test("media ownership is proven before insights; supported values survive missin
     (await getMediaInsights(account, "99899", ports)(req())).status,
     404,
   );
-  assert.equal(calls, before + 1);
+  assert.equal(calls, before + 2);
   const list = await listAccountMedia(
     account,
     ports,
@@ -256,6 +268,25 @@ test("media ownership is proven before insights; supported values survive missin
   assert.equal(page.next_cursor, "opaque-cursor");
   assert.ok(!JSON.stringify(page).includes("untrusted.invalid"));
   assert.equal(queries.at(-1)!.searchParams.get("after"), "previous");
+});
+test("owner API reads API-scoped media owners but rejects tokens for another Instagram account", async () => {
+  mode = "api_scoped_owner";
+  const r = await getMediaInsights(account, "99001", ports)(
+    req("?metrics=views"),
+  );
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).media.id, "99001");
+  assert.equal((await snapshotRows()).rows.length, 1);
+  assert.ok(queries.some((u) => u.pathname.endsWith("/me")));
+  mode = "other_token_identity";
+  queries = [];
+  assert.equal(
+    (await getMediaInsights(account, "99002", ports)(req("?metrics=views")))
+      .status,
+    404,
+  );
+  assert.ok(!queries.some((u) => u.pathname.endsWith("/insights")));
+  assert.equal((await snapshotRows()).rows.length, 1);
 });
 test("owner isolation, permanent owner credential and validation stop before provider or settings mutation", async () => {
   for (const bearer of ["other-token", `bot_${"a".repeat(64)}`]) {

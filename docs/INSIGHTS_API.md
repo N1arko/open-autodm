@@ -4,7 +4,7 @@ Owner agents can read connected professional accounts' metrics, audience breakdo
 
 ## Access and setup
 
-Use `Authorization: Bearer adm_<owner credential>` from [AGENT_API.md](AGENT_API.md); owner JWTs also work. `bot_…` credentials cannot use Insights. Each request checks account ownership. Media reads additionally verify Meta's `owner` against the account; missing/mismatched ownership fails closed.
+Use `Authorization: Bearer adm_<owner credential>` from [AGENT_API.md](AGENT_API.md); owner JWTs also work. `bot_…` credentials cannot use Insights. Each request checks account ownership. Media reads additionally verify Meta's `owner` against the account. When Instagram Login returns a different API-scoped `owner.id`, the same token's `/me` must return that `id` and the account's stored OAuth `user_id`; missing/mismatched ownership fails closed.
 
 Apply `20261005000002_instagram_insights.sql`. Daily collection requires the persistent VPS worker; maintenance cron only prunes snapshots.
 
