@@ -89,6 +89,22 @@ before(async () => {
     assert.equal(u.searchParams.has("access_token"), false);
     assert.match(u.pathname, new RegExp(`^/v26\\.0/act_${metaId}(/|$)`));
     const edge = u.pathname.split("/").at(-1);
+    // Meta rejects business portfolio expansion for an ads_read-only token.
+    if (
+      edge === `act_${metaId}` &&
+      /\bbusiness\b/.test(u.searchParams.get("fields") ?? "")
+    )
+      return json(
+        response,
+        {
+          error: {
+            code: 100,
+            message:
+              "Requires business_management permission to access the field.",
+          },
+        },
+        400,
+      );
     if (mode === "hold" && edge === "campaigns") {
       arrived?.();
       await new Promise<void>((r) => {

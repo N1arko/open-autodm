@@ -20,7 +20,6 @@ const metadataSchema = z.object({
   amount_spent: numeric.optional(),
   spend_cap: numeric.optional(),
   disable_reason: z.number().int().optional(),
-  business: z.object({ id: metaId, name: text.optional() }).optional(),
 });
 export type AdsMetadata = z.infer<typeof metadataSchema>;
 const geo = z.object({
@@ -286,7 +285,7 @@ export function adsMeta(
       const result = metadataSchema.safeParse(
         await call(id, "", token, {
           fields:
-            "id,account_id,name,currency,timezone_name,account_status,amount_spent,spend_cap,disable_reason,business{id,name}",
+            "id,account_id,name,currency,timezone_name,account_status,amount_spent,spend_cap,disable_reason",
         }),
       );
       if (
