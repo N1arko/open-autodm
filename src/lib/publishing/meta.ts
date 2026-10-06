@@ -7,6 +7,8 @@ export class PublishingMetaError extends Error {
     super(code);
   }
 }
+// Publishing can take longer than a metadata read. Keep it inside the worker lease.
+export const PUBLISH_TIMEOUT_MS = 60_000;
 export interface PublishingMeta {
   create(
     account: string,
@@ -36,7 +38,7 @@ export function publishingMeta(
       response = await fetcher(`${base}/${path}`, {
         method: input ? "POST" : "GET",
         redirect: "manual",
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(publishing ? PUBLISH_TIMEOUT_MS : 20_000),
         headers: {
           Authorization: `Bearer ${token}`,
           ...(input

@@ -131,6 +131,8 @@ before(async () => {
         json(response, { error: { code: 4 } }, 429);
         return;
       }
+      if (mode === "slow")
+        await new Promise((resolve) => setTimeout(resolve, 22_000));
       json(response, { id: "123456" });
     } else if (path.endsWith("/99001")) {
       polls++;
@@ -206,6 +208,17 @@ test("real owner API and Graph HTTP publish scheduled Reel once and return perma
   assert.equal(visible.status, "published");
   assert.equal("claim_token" in visible, false);
   assert.equal("request_hash" in visible, false);
+});
+test("a publish acknowledgement after 20 seconds is saved once within the lease", async () => {
+  mode = "slow";
+  const id = await queued();
+  await tick();
+  await tick();
+  await tick();
+  assert.equal((await row(id)).status, "published");
+  assert.equal((await row(id)).media_id, "123456");
+  await tick();
+  assert.equal(published, 1);
 });
 test("cover survives the queue, reaches Meta and participates in idempotency", async () => {
   const cover_url = "https://8.8.8.8/cover.jpg";

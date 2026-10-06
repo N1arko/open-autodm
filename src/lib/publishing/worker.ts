@@ -5,6 +5,7 @@ import { transportStore, type TransportStore } from "@/lib/transport/store";
 import { validateVideoUrl } from "./url";
 import {
   PublishingMetaError,
+  PUBLISH_TIMEOUT_MS,
   publishingMeta,
   type PublishingMeta,
 } from "./meta";
@@ -130,7 +131,10 @@ async function run(
     await finish("processing", { p_delay: 15 });
     return;
   }
-  if (Date.parse(p.lease_expires_at) < Date.now() + 40_000) {
+  if (
+    Date.parse(p.lease_expires_at) <
+    Date.now() + PUBLISH_TIMEOUT_MS + 20_000
+  ) {
     await finish("processing", { p_delay: 5 });
     return;
   }
@@ -142,7 +146,10 @@ async function run(
     }))
   )
     return;
-  if (Date.parse(p.lease_expires_at) < Date.now() + 25_000) {
+  if (
+    Date.parse(p.lease_expires_at) <
+    Date.now() + PUBLISH_TIMEOUT_MS + 5_000
+  ) {
     await finish("processing", { p_delay: 5 });
     return;
   }
