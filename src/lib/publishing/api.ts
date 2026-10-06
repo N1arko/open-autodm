@@ -16,6 +16,7 @@ export const publicationSchema = z
   .object({
     account_id: z.string().uuid(),
     video_url: z.string().url().max(4096),
+    cover_url: z.string().url().max(4096).optional(),
     caption: z
       .string()
       .refine((s) => Array.from(s).length <= 2200)
@@ -25,7 +26,7 @@ export const publicationSchema = z
   })
   .strict();
 const visible =
-  "id,account_id,video_url,caption,share_to_feed,publish_at,status,container_id,media_id,permalink,error_code,attempts,created_at,updated_at,published_at";
+  "id,account_id,video_url,cover_url,caption,share_to_feed,publish_at,status,container_id,media_id,permalink,error_code,attempts,created_at,updated_at,published_at";
 export function publicPublication(row: Record<string, unknown>) {
   return Object.fromEntries(visible.split(",").map((k) => [k, row[k]]));
 }
@@ -75,6 +76,13 @@ export const createPublication = apiRoute(async (request) => {
     } catch {
       throw new ApiError(400, "invalid_video_url");
     }
+    if (input.cover_url) {
+      try {
+        await validateVideoUrl(input.cover_url);
+      } catch {
+        throw new ApiError(400, "invalid_cover_url");
+      }
+    }
   }
   const row = await rpc<Record<string, unknown>>("publishing_enqueue", {
     p_user: user,
@@ -85,6 +93,7 @@ export const createPublication = apiRoute(async (request) => {
     p_at: at,
     p_key: key,
     p_hash: requestHash,
+    p_cover: input.cover_url ?? null,
   });
   return respond(publicPublication(row), 202);
 });

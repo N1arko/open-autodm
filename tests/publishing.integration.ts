@@ -36,6 +36,7 @@ let account: string,
   polls = 0,
   linkReads = 0,
   mode = "ok";
+let receivedCover: string | null = null;
 const req = (
   method: string,
   value?: unknown,
@@ -111,6 +112,7 @@ before(async () => {
       assert.equal(form.get("video_url"), video);
       assert.equal(form.get("caption"), "Hello 👋");
       assert.equal(form.get("share_to_feed"), "true");
+      receivedCover = form.get("cover_url");
       created++;
       json(response, { id: "99001" });
     } else if (request.method === "POST" && path.endsWith("/media_publish")) {
@@ -129,6 +131,8 @@ before(async () => {
         json(response, { error: { code: 4 } }, 429);
         return;
       }
+      if (mode === "slow")
+        await new Promise((resolve) => setTimeout(resolve, 22_000));
       json(response, { id: "123456" });
     } else if (path.endsWith("/99001")) {
       polls++;
@@ -154,6 +158,7 @@ beforeEach(async () => {
   account = randomUUID();
   created = published = polls = linkReads = 0;
   mode = "ok";
+  receivedCover = null;
   await db.pool.query(
     "INSERT INTO instagram_accounts(id,user_id,instagram_user_id,username,access_token_encrypted) VALUES($1,$2,$3,$4,$5)",
     [account, owner, "17840001", "fixture", encrypt("fake-meta-token", key)],
@@ -203,6 +208,72 @@ test("real owner API and Graph HTTP publish scheduled Reel once and return perma
   assert.equal(visible.status, "published");
   assert.equal("claim_token" in visible, false);
   assert.equal("request_hash" in visible, false);
+});
+test("a publish acknowledgement after 20 seconds is saved once within the lease", async () => {
+  mode = "slow";
+  const id = await queued();
+  await tick();
+  await tick();
+  await tick();
+  assert.equal((await row(id)).status, "published");
+  assert.equal((await row(id)).media_id, "123456");
+  await tick();
+  assert.equal(published, 1);
+});
+test("cover survives the queue, reaches Meta and participates in idempotency", async () => {
+  const cover_url = "https://8.8.8.8/cover.jpg";
+  const id = await queued({ cover_url });
+  assert.equal((await row(id)).cover_url, cover_url);
+  await tick();
+  assert.equal(receivedCover, cover_url);
+  await tick();
+  await tick();
+  await tick();
+  const visible = await (await getPublication(id)(req("GET"))).json();
+  assert.equal(visible.cover_url, cover_url);
+  assert.equal(visible.status, "published");
+  assert.equal(published, 1);
+  assert.equal(
+    (await createPublication(req("POST", input({ cover_url })))).status,
+    202,
+  );
+  assert.equal(
+    (
+      await createPublication(
+        req("POST", input({ cover_url: "https://8.8.8.8/other.jpg" })),
+      )
+    ).status,
+    409,
+  );
+});
+test("cover URL validation fails closed at enqueue and again before Meta fetches it", async () => {
+  for (const cover_url of [
+    "https://127.0.0.1/cover.jpg",
+    "http://8.8.8.8/cover.jpg",
+    "https://user:secret@8.8.8.8/cover.jpg",
+  ]) {
+    const response = await createPublication(req("POST", input({ cover_url })));
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, "invalid_cover_url");
+  }
+  const cover_url = "https://8.8.8.8/cover.jpg";
+  const id = await queued({ cover_url });
+  await tick(db.store, {
+    validateVideo: async (url) => {
+      if (url === cover_url) throw new Error("DNS changed");
+    },
+  });
+  assert.equal((await row(id)).status, "failed");
+  assert.equal((await row(id)).error_code, "invalid_cover_url");
+  assert.equal(created, 0);
+  assert.equal(published, 0);
+});
+test("cover migration accepts the prior eight-argument enqueue RPC", async () => {
+  const result = await db.pool.query(
+    "SELECT publishing_enqueue($1,$2,$3,$4,$5,$6,$7,$8) AS job",
+    [owner, account, video, "Hello 👋", true, null, "legacy", "legacy-hash"],
+  );
+  assert.equal(result.rows[0].job.cover_url, null);
 });
 test("owner isolation, bot credentials, input validation, cancellation and expired tokens", async () => {
   const id = await queued();
