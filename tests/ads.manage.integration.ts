@@ -18,6 +18,7 @@ import {
   type ManagePorts,
 } from "../src/lib/ads/manage";
 import { getAdsAccount } from "../src/lib/ads/api";
+import { ApiError } from "../src/lib/transport/api";
 
 let db: Awaited<ReturnType<typeof databaseFixture>>,
   rest: Server,
@@ -841,6 +842,85 @@ test("an omitted Instagram identity is checked through exact account-scoped Meta
   assert.equal(readPaths.some((p) => p.endsWith("/instagram_accounts")), false);
   assert.equal((await execute(o)).status, 200);
   assert.equal(posts.length, 4);
+});
+test("existing Instagram post website ads preserve the exact destination and button across validation and execution", async () => {
+  await enable();
+  const linked = {
+    ...instagramPost,
+    params: {
+      ...instagramPost.params,
+      creative: {
+        ...instagramPost.params.creative,
+        link: "https://music.example/artist?utm_source=instagram",
+        call_to_action: "LISTEN_NOW",
+      },
+    },
+  };
+  const o = await prepare(linked);
+  const r = await execute(o);
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).state, "succeeded");
+  assert.equal(posts.length, 3);
+  for (const p of posts) {
+    assert.equal(p.params.source_instagram_media_id, "801");
+    assert.equal(p.params.link_url, linked.params.creative.link);
+    assert.deepEqual(JSON.parse(p.params.call_to_action!), {
+      type: "LISTEN_NOW",
+      value: { link: linked.params.creative.link },
+    });
+  }
+  assert.equal(posts[0]!.params.execution_options, '["validate_only"]');
+  assert.equal(posts[1]!.params.execution_options, '["validate_only"]');
+  assert.equal(posts[2]!.params.execution_options, undefined);
+  const noLink = {
+    ...linked,
+    params: {
+      ...linked.params,
+      creative: { ...linked.params.creative, link: undefined },
+    },
+  };
+  assert.equal((await prepareAction(connection, ports)(req(noLink))).status, 400);
+});
+test("existing-post destinations that stop resolving publicly cannot be created after preparation", async () => {
+  await enable();
+  let blocked = true;
+  const guardedPorts = (): ManagePorts => ({
+    ...ports(),
+    resolve: async (value) => {
+      if (blocked) throw new ApiError(400, "invalid_media_url");
+      return {
+        url: new URL(value),
+        addresses: [{ address: "8.8.8.8", family: 4 }],
+      };
+    },
+  });
+  const linked = {
+    ...instagramPost,
+    params: {
+      ...instagramPost.params,
+      creative: {
+        ...instagramPost.params.creative,
+        link: "https://music.example/",
+      },
+    },
+  };
+  assert.equal(
+    (await prepareAction(connection, guardedPorts)(req(linked))).status,
+    400,
+  );
+  assert.equal(posts.length, 0);
+  blocked = false;
+  const prepared = await prepareAction(connection, guardedPorts)(req(linked));
+  assert.equal(prepared.status, 201);
+  const o = await prepared.json();
+  assert.equal(posts.length, 1);
+  blocked = true;
+  const r = await executeAction(connection, o.id, guardedPorts)(
+    req({ plan_hash: o.plan_hash, confirm_spend: false }),
+  );
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).state, "cancelled");
+  assert.equal(posts.length, 1);
 });
 test("Meta refusal or invalid validation blocks Instagram creatives even when the profile is listed", async () => {
   await enable();

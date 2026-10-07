@@ -127,7 +127,7 @@ Example ad set in a campaign using ad-set budgets:
 Choose the `creative.kind` explicitly:
 
 - `facebook_post`: `object_story_id:"{PageID}_{PostID}"`; the Page must be advertisable through the account.
-- `instagram_post`: `source_instagram_media_id`, `instagram_user_id`; use identities and media IDs valid for the Marketing API, not assumed publishing UUIDs.
+- `instagram_post`: `source_instagram_media_id`, `instagram_user_id`, optional public HTTPS `link` and `call_to_action`; use identities and media IDs valid for the Marketing API, not assumed publishing UUIDs. With a link, the default button is `LEARN_MORE`; for music use `LISTEN_NOW`. A button requires a link. The destination is checked for public network addresses during preparation and again during execution. Meta validates the exact existing-post, identity, destination and button combination before either operation.
 - `image`: `page_id`, optional `instagram_user_id`, exactly one of account-owned `image_hash` or public HTTPS `image_url`, destination `link`, `message`, optional `title` and `call_to_action`.
 - `video`: `page_id`, optional `instagram_user_id`, account-owned ready `video_id`, public HTTPS thumbnail `image_url`, `message`, optional `title`, destination `link` and `call_to_action`.
 

@@ -136,6 +136,8 @@ const creative = z.discriminatedUnion("kind", [
       kind: z.literal("instagram_post"),
       source_instagram_media_id: metaId,
       instagram_user_id: metaId,
+      link: url.optional(),
+      call_to_action: cta.optional(),
     })
     .strict(),
   z
@@ -351,6 +353,13 @@ export const actionInput = z
       });
     if (
       v.action === "creative.create" &&
+      v.params.creative.kind === "instagram_post" &&
+      v.params.creative.call_to_action &&
+      !v.params.creative.link
+    )
+      ctx.addIssue({ code: "custom", message: "call_to_action_requires_link" });
+    if (
+      v.action === "creative.create" &&
       v.params.creative.kind === "image" &&
       !!v.params.creative.image_hash === !!v.params.creative.image_url
     )
@@ -396,6 +405,13 @@ export function paramsFor(a: Action): Record<string, unknown> {
     else if (c.kind === "instagram_post") {
       p.source_instagram_media_id = c.source_instagram_media_id;
       p.instagram_user_id = c.instagram_user_id;
+      if (c.link) {
+        p.link_url = c.link;
+        p.call_to_action = {
+          type: c.call_to_action ?? "LEARN_MORE",
+          value: { link: c.link },
+        };
+      }
     } else {
       const callToAction = c.call_to_action
         ? {

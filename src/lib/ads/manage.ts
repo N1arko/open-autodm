@@ -200,6 +200,7 @@ async function plan(
   if (action.action === "video.upload") await p.resolve(action.params.file_url);
   if (action.action === "creative.create") {
     const c = action.params.creative;
+    if (c.kind === "instagram_post" && c.link) await p.resolve(c.link);
     if (c.kind === "image" || c.kind === "video") {
       if (c.instagram_user_id) {
         // promote_pages can omit a usable Page, just like instagram_accounts.
