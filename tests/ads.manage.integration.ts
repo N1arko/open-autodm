@@ -31,6 +31,8 @@ const user = randomUUID(),
   access = "fixture-management-token-at-least-20";
 let objects: Record<string, Record<string, unknown>>,
   posts: { path: string; params: Record<string, string> }[],
+  readPaths: string[],
+  instagramRows: { id: string; username: string }[],
   reads: number,
   mode: string,
   release: (() => void) | undefined,
@@ -178,6 +180,7 @@ before(async () => {
     }
     assert.equal(request.method, "GET");
     reads++;
+    readPaths.push(path);
     if (objects[path]) return json(response, objects[path]);
     if (path === "100/adsets")
       return json(response, {
@@ -188,9 +191,7 @@ before(async () => {
     if (path.endsWith("/promote_pages"))
       return json(response, { data: [{ id: "700", name: "Page" }] });
     if (path.endsWith("/instagram_accounts"))
-      return json(response, {
-        data: [{ id: "800", username: "fixture.artist" }],
-      });
+      return json(response, { data: instagramRows });
     if (path.endsWith("/adimages"))
       return json(response, {
         data: [{ hash: "a".repeat(32), name: "Image" }],
@@ -268,6 +269,8 @@ beforeEach(async () => {
     "999": { id: "999", account_id: "456", name: "Foreign" },
   };
   posts = [];
+  readPaths = [];
+  instagramRows = [{ id: "800", username: "fixture.artist" }];
   reads = 0;
   mode = "ok";
   release = undefined;
@@ -647,7 +650,11 @@ test("creatives, paused ads and video imports enforce asset ownership and Meta-r
     },
   };
   assert.equal((await execute(await prepare(image))).status, 200);
-  const spec = JSON.parse(posts[0]!.params.object_story_spec!);
+  assert.deepEqual(
+    posts.map((p) => p.params.execution_options),
+    ['["validate_only"]', '["validate_only"]', undefined],
+  );
+  const spec = JSON.parse(posts[2]!.params.object_story_spec!);
   assert.equal(spec.instagram_user_id, "800");
   assert.equal(spec.link_data.image_hash, "a".repeat(32));
   assert.equal("instagram_actor_id" in spec, false);
@@ -670,7 +677,7 @@ test("creatives, paused ads and video imports enforce asset ownership and Meta-r
     ).status,
     200,
   );
-  assert.equal(posts[1]!.params.status, "PAUSED");
+  assert.equal(posts[3]!.params.status, "PAUSED");
   const video = {
     action: "creative.create",
     params: {
@@ -726,4 +733,89 @@ test("creatives, paused ads and video imports enforce asset ownership and Meta-r
     ).status,
     200,
   );
+});
+
+const instagramPost = {
+  action: "creative.create",
+  params: {
+    name: "Existing Instagram post",
+    creative: {
+      kind: "instagram_post",
+      instagram_user_id: "800",
+      source_instagram_media_id: "801",
+    },
+  },
+};
+test("an omitted Instagram identity is checked through exact account-scoped Meta validation before preparation and execution", async () => {
+  await enable();
+  instagramRows = [];
+  const listed = await listAssets(connection, "instagram", ports)(
+    req(undefined, "owner", "GET"),
+  );
+  assert.deepEqual((await listed.json()).data, []);
+  readPaths = [];
+  const validation = await validateAction(connection, ports)(req(instagramPost));
+  assert.equal(validation.status, 200);
+  assert.equal((await validation.json()).meta_validated, true);
+  const k = randomUUID(),
+    o = await prepare(instagramPost, k);
+  assert.equal(o.plan.meta_validated, true);
+  assert.deepEqual(o.plan.dependencies["instagram:800"], { id: "800" });
+  const replay = await prepareAction(connection, ports)(
+    req(instagramPost, "owner", "POST", k),
+  );
+  assert.equal(replay.status, 200);
+  assert.equal((await replay.json()).id, o.id);
+  assert.equal(posts.length, 2);
+  assert(posts.every((p) => p.params.execution_options === '["validate_only"]'));
+  // Discovery can change independently of the authorization of this creative.
+  instagramRows = [{ id: "800", username: "renamed.artist" }];
+  const done = await execute(o);
+  assert.equal(done.status, 200);
+  assert.equal((await done.json()).state, "succeeded");
+  assert.equal(posts.length, 4);
+  assert.equal(posts[2]!.params.execution_options, '["validate_only"]');
+  assert.equal(posts[3]!.params.execution_options, undefined);
+  assert(posts.every((p) => p.path === "act_123/adcreatives"));
+  assert(posts.every((p) => p.params.instagram_user_id === "800"));
+  assert(posts.every((p) => p.params.source_instagram_media_id === "801"));
+  assert.equal(readPaths.some((p) => p.endsWith("/instagram_accounts")), false);
+  assert.equal((await execute(o)).status, 200);
+  assert.equal(posts.length, 4);
+});
+test("Meta refusal or invalid validation blocks Instagram creatives even when the profile is listed", async () => {
+  await enable();
+  for (const [m, status, code] of [
+    ["denied", 403, "ads_permission_required"],
+    ["server", 502, "meta_unavailable"],
+    ["malformed", 502, "meta_invalid_validation_response"],
+  ] as const) {
+    mode = m;
+    for (const handler of [prepareAction, validateAction]) {
+      const r = await handler(connection, ports)(req(instagramPost));
+      assert.equal(r.status, status);
+      assert.equal((await r.json()).error, code);
+    }
+  }
+  assert.equal(posts.length, 6);
+  assert(posts.every((p) => p.params.execution_options === '["validate_only"]'));
+  assert.equal(
+    (await db.pool.query("SELECT count(*) FROM meta_ads_operations")).rows[0].count,
+    "0",
+  );
+});
+test("revoked Instagram creative access cancels a prepared operation before any real write", async () => {
+  await enable();
+  instagramRows = [];
+  const o = await prepare(instagramPost);
+  mode = "denied";
+  const r = await execute(o);
+  assert.equal(r.status, 403);
+  const cancelled = await r.json();
+  assert.equal(cancelled.state, "cancelled");
+  assert.equal(cancelled.result.error, "ads_permission_required");
+  assert.equal(posts.length, 2);
+  assert(posts.every((p) => p.params.execution_options === '["validate_only"]'));
+  assert.equal((await execute(o)).status, 409);
+  assert.equal(posts.length, 2);
 });

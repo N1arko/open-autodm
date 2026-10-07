@@ -126,13 +126,14 @@ async function plan(
   const access = enabled(a, pol, p),
     deps: Record<string, unknown> = {},
     params = action.params as Record<string, unknown>;
+  let validateInstagramCreative = false;
   const object = async (id: string, kind: string) => {
     const v = await p.writer.object(a.ad_account_id, id, kind, access);
     deps[`${kind}:${id}`] = v;
     return v;
   };
   const asset = async (
-    kind: "pages" | "images" | "videos" | "instagram",
+    kind: "pages" | "images" | "videos",
     id: string,
   ) => {
     let after: string | undefined;
@@ -194,8 +195,12 @@ async function plan(
         await p.resolve(c.image_url);
       }
     }
-    if ("instagram_user_id" in c && c.instagram_user_id)
-      await asset("instagram", c.instagram_user_id);
+    if ("instagram_user_id" in c && c.instagram_user_id) {
+      // The account's instagram_accounts edge can omit usable identities.
+      // Validate this exact creative for this ad account, including on execution.
+      validateInstagramCreative = true;
+      deps[`instagram:${c.instagram_user_id}`] = { id: c.instagram_user_id };
+    }
     if (c.kind === "facebook_post")
       await asset("pages", c.object_story_id.split("_")[0]!);
   }
@@ -268,14 +273,16 @@ async function plan(
     !target.end_time
   )
     throw new ApiError(400, "lifetime_budget_requires_end_time");
-  if (validate) await p.writer.mutate(a.ad_account_id, access, action, true);
+  const metaValidated = validate || validateInstagramCreative;
+  if (metaValidated)
+    await p.writer.mutate(a.ad_account_id, access, action, true);
   return {
     action,
     currency: pol.currency,
     dependencies: deps,
     requires_spend_confirmation: risk,
     budget,
-    meta_validated: validate,
+    meta_validated: metaValidated,
   };
 }
 export const getManagement = (id: string, ports = defaultManagePorts) =>
