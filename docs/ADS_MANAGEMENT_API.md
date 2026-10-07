@@ -136,7 +136,7 @@ The provider fields use current `instagram_user_id`, not the older `instagram_ac
 ## Agent workflow
 
 1. List connected ad accounts and select the owner's intended account explicitly.
-2. Read campaigns, Insights, management limits and identity/asset discovery. Treat Instagram discovery as partial; check the selected Marketing API identity and creative through `/actions/validate` even when discovery omits the profile. Obtain missing creative, destination, audience, budget or schedule details from the owner.
+2. Read campaigns, Insights, management limits and identity/asset discovery. Instagram discovery and Page discovery for Instagram image/video creatives are partial: check the explicit Instagram identity, Page and creative through `/actions/validate` even when discovery omits them. The service checks that exact combination with Meta before preparation and again before execution; a refusal or unavailable validation blocks the write. Facebook-only creatives still require Page discovery membership. Obtain missing creative, destination, audience, budget or schedule details from the owner.
 3. Configure management limits from the owner's instruction, then prepare/execute a paused campaign. Capture its Meta ID.
 4. Prepare/execute a paused ad set, creative and paused ad sequentially, using returned IDs.
 5. Optionally validate supported actions with Meta's validation-only endpoint. Inspect the paused objects before launch.

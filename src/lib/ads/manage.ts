@@ -186,7 +186,11 @@ async function plan(
   if (action.action === "creative.create") {
     const c = action.params.creative;
     if (c.kind === "image" || c.kind === "video") {
-      await asset("pages", c.page_id);
+      if (c.instagram_user_id) {
+        // promote_pages can omit a usable Page, just like instagram_accounts.
+        // Exact Meta validation below checks both identities again on execution.
+        deps[`pages:${c.page_id}`] = { id: c.page_id };
+      } else await asset("pages", c.page_id);
       if (c.kind === "image") {
         if (c.image_hash) await asset("images", c.image_hash);
         else await p.resolve(c.image_url!);

@@ -33,6 +33,7 @@ let objects: Record<string, Record<string, unknown>>,
   posts: { path: string; params: Record<string, string> }[],
   readPaths: string[],
   instagramRows: { id: string; username: string }[],
+  pageRows: { id: string; name: string }[],
   reads: number,
   mode: string,
   release: (() => void) | undefined,
@@ -161,6 +162,11 @@ before(async () => {
           400,
         );
       if (mode === "malformed") return json(response, { unexpected: "secret" });
+      if (
+        params.object_story_spec &&
+        JSON.parse(params.object_story_spec).page_id !== "700"
+      )
+        return json(response, { error: { code: 200 } }, 400);
       if (params.execution_options === '["validate_only"]')
         return json(response, { success: true });
       if (objects[path]) {
@@ -189,7 +195,7 @@ before(async () => {
         ),
       });
     if (path.endsWith("/promote_pages"))
-      return json(response, { data: [{ id: "700", name: "Page" }] });
+      return json(response, { data: pageRows });
     if (path.endsWith("/instagram_accounts"))
       return json(response, { data: instagramRows });
     if (path.endsWith("/adimages"))
@@ -271,6 +277,7 @@ beforeEach(async () => {
   posts = [];
   readPaths = [];
   instagramRows = [{ id: "800", username: "fixture.artist" }];
+  pageRows = [{ id: "700", name: "Page" }];
   reads = 0;
   mode = "ok";
   release = undefined;
@@ -665,7 +672,7 @@ test("creatives, paused ads and video imports enforce asset ownership and Meta-r
       creative: { ...image.params.creative, page_id: "701" },
     },
   };
-  assert.equal((await prepareAction(connection, ports)(req(bad))).status, 404);
+  assert.equal((await prepareAction(connection, ports)(req(bad))).status, 403);
   assert.equal(
     (
       await execute(
@@ -677,7 +684,7 @@ test("creatives, paused ads and video imports enforce asset ownership and Meta-r
     ).status,
     200,
   );
-  assert.equal(posts[3]!.params.status, "PAUSED");
+  assert.equal(posts.at(-1)!.params.status, "PAUSED");
   const video = {
     action: "creative.create",
     params: {
@@ -732,6 +739,58 @@ test("creatives, paused ads and video imports enforce asset ownership and Meta-r
       )(req(undefined, "owner", "GET"))
     ).status,
     200,
+  );
+});
+
+test("an omitted Page is validated together with its Instagram creative and revoked access prevents execution", async () => {
+  await enable();
+  pageRows = [];
+  instagramRows = [];
+  const image = {
+    action: "creative.create",
+    params: {
+      name: "Instagram image",
+      creative: {
+        kind: "image",
+        page_id: "700",
+        instagram_user_id: "800",
+        image_hash: "a".repeat(32),
+        link: "https://example.com/",
+        message: "Fixture",
+      },
+    },
+  };
+  const listed = await listAssets(connection, "pages", ports)(
+    req(undefined, "owner", "GET"),
+  );
+  assert.deepEqual((await listed.json()).data, []);
+  readPaths = [];
+  const checked = await validateAction(connection, ports)(req(image));
+  assert.equal(checked.status, 200);
+  assert.equal((await checked.json()).meta_validated, true);
+  const prepared = await prepare(image);
+  assert.deepEqual(prepared.plan.dependencies["pages:700"], { id: "700" });
+  assert.deepEqual(prepared.plan.dependencies["instagram:800"], { id: "800" });
+  assert.equal(readPaths.some((p) => p.endsWith("/promote_pages")), false);
+  const spec = JSON.parse(posts[0]!.params.object_story_spec!);
+  assert.equal(spec.page_id, "700");
+  assert.equal(spec.instagram_user_id, "800");
+  mode = "denied";
+  const failed = await execute(prepared);
+  assert.equal(failed.status, 403);
+  assert.equal((await failed.json()).state, "cancelled");
+  assert(posts.every((p) => p.params.execution_options === '["validate_only"]'));
+  // Facebook-only creatives still require Page discovery membership.
+  const facebookOnly = {
+    ...image,
+    params: {
+      ...image.params,
+      creative: { ...image.params.creative, instagram_user_id: undefined },
+    },
+  };
+  assert.equal(
+    (await prepareAction(connection, ports)(req(facebookOnly))).status,
+    404,
   );
 });
 
