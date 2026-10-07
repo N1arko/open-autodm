@@ -22,6 +22,8 @@ Asset lists return one page of up to 50 rows and `next_cursor`; use `after` for 
 
 Meta's `instagram_accounts` discovery edge can omit an identity that is permitted for a specific creative. An empty list does not establish that no Instagram profile is usable. For `creative.create` with `instagram_user_id`, the service checks the exact creative against the selected ad account using Meta `validate_only` during preparation and again before execution. This applies to existing Instagram posts and to image/video creatives with an Instagram identity. A refusal, timeout or invalid validation response blocks the operation; the service does not infer advertising permission from an Instagram Login connection. `/actions/validate` performs the same check without preparing or creating an object.
 
+Validation-only provider requests can wait up to 30 seconds, within the management route's overall 45-second deadline. Ordinary provider requests retain their 12-second limit. A timeout remains an error and does not authorize a subsequent write.
+
 ## Enable management and define budgets
 
 Management is initially disabled for every connection. An owner enables it separately:

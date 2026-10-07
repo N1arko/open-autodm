@@ -52,6 +52,7 @@ export function writeMeta(
     token: string,
     params: Record<string, unknown>,
     post = false,
+    timeoutMs = 12000,
   ) {
     if (
       !/^(act_)?\d{1,30}(\/(campaigns|adsets|ads|adcreatives|advideos|adimages|promote_pages|instagram_accounts))?$/.test(
@@ -79,7 +80,7 @@ export function writeMeta(
         },
         ...(post ? { body: form } : {}),
         redirect: "manual",
-        signal: AbortSignal.timeout(Math.min(12000, remaining)),
+        signal: AbortSignal.timeout(Math.min(timeoutMs, remaining)),
       });
       const reader = r.body?.getReader();
       if (!reader) throw new Error();
@@ -292,6 +293,9 @@ export function writeMeta(
           ...(validate ? { execution_options: ["validate_only"] } : {}),
         },
         true,
+        // Instagram-post validation can take longer than ordinary Graph reads.
+        // It creates no object; keep it bounded by the overall request deadline.
+        validate ? 30000 : 12000,
       );
       if (validate) {
         if (data.success !== true)
