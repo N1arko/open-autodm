@@ -97,7 +97,7 @@ The JSON body always contains `action` and `params`; update actions also require
 - `ad.update`: `object_id`; any of `name`, `status`, `creative_id`.
 - `video.upload`: `name`, public HTTPS `file_url`. The service asks Meta to import this video into the connected ad account. Its returned ID may still be processing. Poll `/assets/videos` and require `video_status:ready` before using it in a creative. Meta validation-only is unavailable for video import.
 
-Targeting supports country geography, ages 18–65, genders, platform/placement selection, `flexible_spec` interests/behaviors, custom and excluded audience IDs, locales and an explicit Advantage audience switch. All referenced objects and creative assets are checked against the selected advertising account. Meta still determines which objective, optimization, targeting, placement, special category and identity combinations are permitted. This API does not create pixels, lead forms, audiences, product catalogs, business assets or policy exemptions.
+Targeting supports country geography, ages 18–65, genders, platform/placement selection, `flexible_spec` interests/behaviors, custom and excluded audience IDs, locales and an explicit Advantage audience switch. All referenced objects and creative assets are checked against the selected advertising account. Meta still determines which objective, optimization, targeting, placement, special category and identity combinations are permitted. Pixel, audience, commerce catalog/product/set creation and background optimization are documented in [ADS_AUTOMATION_API.md](ADS_AUTOMATION_API.md). Lead forms, business asset assignments and policy exemptions remain outside this release.
 
 Example ad set in a campaign using ad-set budgets:
 
@@ -144,6 +144,8 @@ The provider fields use current `instagram_user_id`, not the older `instagram_ac
 7. Fetch fresh statuses/Insights and report object IDs and results. A successful mutation acknowledgment is not evidence of delivery, approval or spend; Meta review and asset processing can remain pending.
 8. Pause, change budgets/targeting/creative or rename with the same plan/execute contract. After an uncertain result, inspect Meta before taking any further action that could duplicate it.
 
-There are no automatic optimization rules, recurring background budget changes, delete endpoints or unattended token refresh in this release. See [ADS_API.md](ADS_API.md) for reporting dates, attribution, pagination, token rotation and read errors.
+Background rules can observe, pause and adjust daily budgets within standing owner authorization; see [ADS_AUTOMATION_API.md](ADS_AUTOMATION_API.md). Delete endpoints and automatic Facebook user-token renewal remain outside this release. See [ADS_API.md](ADS_API.md) for reporting dates, attribution, pagination, token rotation and read errors.
 
 Provider references: [official Meta Business SDK](https://github.com/facebook/facebook-python-business-sdk), [official Marketing API collection](https://www.postman.com/meta/facebook-marketing-api/collection/0zr4mes/facebook-marketing-api-mapi).
+
+See [ADS_AUTOMATION_API.md](ADS_AUTOMATION_API.md) for advertising resources, background optimization rules and credential health.

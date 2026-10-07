@@ -24,6 +24,11 @@ import {
   type Policy,
 } from "./actions";
 import {
+  isResource,
+  type ResourceKind,
+  type ResourceAction,
+} from "./resourceActions";
+import {
   writeMeta,
   WriteMetaError,
   type MetaObject,
@@ -56,7 +61,7 @@ export const defaultManagePorts = (): ManagePorts => ({
   ),
   resolve: resolveMediaUrl,
 });
-interface Plan {
+export interface Plan {
   action: Action;
   currency: string;
   dependencies: Record<string, unknown>;
@@ -64,7 +69,7 @@ interface Plan {
   budget: { daily_budget_minor: string; lifetime_budget_minor: string } | null;
   meta_validated: boolean;
 }
-interface Operation {
+export interface Operation {
   id: string;
   account_id: string;
   plan: Plan;
@@ -89,6 +94,7 @@ function failure(error: unknown): never {
       "spend_confirmation_required",
       "operation_in_progress",
       "idempotency_conflict",
+      "automation_cancelled",
     ].includes(message)
   )
     throw new ApiError(409, message);
@@ -126,16 +132,25 @@ async function plan(
   const access = enabled(a, pol, p),
     deps: Record<string, unknown> = {},
     params = action.params as Record<string, unknown>;
+  if (isResource(action)) {
+    if (validate) throw new ApiError(400, "resource_validation_unavailable");
+    await resourceDependencies(a, action, p, deps);
+    return {
+      action,
+      currency: pol.currency,
+      dependencies: deps,
+      requires_spend_confirmation: false,
+      budget: null,
+      meta_validated: false,
+    };
+  }
   let validateInstagramCreative = false;
   const object = async (id: string, kind: string) => {
     const v = await p.writer.object(a.ad_account_id, id, kind, access);
     deps[`${kind}:${id}`] = v;
     return v;
   };
-  const asset = async (
-    kind: "pages" | "images" | "videos",
-    id: string,
-  ) => {
+  const asset = async (kind: "pages" | "images" | "videos", id: string) => {
     let after: string | undefined;
     for (let i = 0; i < 10; i++) {
       const page = await p.writer.assets(a.ad_account_id, access, kind, after);
@@ -316,50 +331,60 @@ export const setManagement = (id: string, ports = defaultManagePorts) =>
 export const prepareAction = (id: string, ports = defaultManagePorts) =>
   apiRoute(async (request) => {
     const p = ports(),
-      a = await account(await owner(request), id, p),
-      action = await jsonBody(request, actionInput),
-      pol = await policy(a, p);
-    const key = keySchema.safeParse(request.headers.get("Idempotency-Key"));
-    if (!key.success) throw new ApiError(400, "idempotency_key_required");
-    const requestHash = hash(stable(action));
-    const previous = await p.store.rpc<Operation | null>("ads_operation_find", {
+      a = await account(await owner(request), id, p);
+    const { replayed, ...prepared } = await prepareManaged(
+      a,
+      await jsonBody(request, actionInput),
+      request.headers.get("Idempotency-Key"),
+      p,
+    );
+    return respond(prepared, replayed ? 200 : 201);
+  });
+export async function prepareManaged(
+  a: AdsAccount,
+  action: Action,
+  idempotency: string | null,
+  p: ManagePorts,
+): Promise<Operation & { replayed?: boolean }> {
+  const pol = await policy(a, p);
+  const key = keySchema.safeParse(idempotency);
+  if (!key.success) throw new ApiError(400, "idempotency_key_required");
+  const requestHash = hash(stable(action));
+  const previous = await p.store.rpc<Operation | null>("ads_operation_find", {
+    p_user: a.user_id,
+    p_account: a.id,
+    p_key: key.data,
+  });
+  if (previous) {
+    if (previous.request_hash !== requestHash)
+      throw new ApiError(409, "idempotency_conflict");
+    return { ...previous, replayed: true };
+  }
+  const value = await plan(a, pol, action, p, false);
+  if (Buffer.byteLength(JSON.stringify(value)) > 65536)
+    throw new ApiError(413, "plan_too_large");
+  const planHash = hash(
+    stable({
+      ...value,
+      account_revision: a.revision,
+      policy_revision: pol.revision,
+    }),
+  );
+  try {
+    return await p.store.rpc<Operation>("ads_operation_prepare", {
       p_user: a.user_id,
       p_account: a.id,
       p_key: key.data,
+      p_request: requestHash,
+      p_revision: a.revision,
+      p_policy: pol.revision,
+      p_hash: planHash,
+      p_plan: value,
     });
-    if (previous) {
-      if (previous.request_hash !== requestHash)
-        throw new ApiError(409, "idempotency_conflict");
-      return respond(previous);
-    }
-    const value = await plan(a, pol, action, p, false);
-    if (Buffer.byteLength(JSON.stringify(value)) > 65536)
-      throw new ApiError(413, "plan_too_large");
-    const planHash = hash(
-      stable({
-        ...value,
-        account_revision: a.revision,
-        policy_revision: pol.revision,
-      }),
-    );
-    try {
-      return respond(
-        await p.store.rpc("ads_operation_prepare", {
-          p_user: a.user_id,
-          p_account: a.id,
-          p_key: key.data,
-          p_request: requestHash,
-          p_revision: a.revision,
-          p_policy: pol.revision,
-          p_hash: planHash,
-          p_plan: value,
-        }),
-        201,
-      );
-    } catch (e) {
-      failure(e);
-    }
-  });
+  } catch (e) {
+    failure(e);
+  }
+}
 export const validateAction = (id: string, ports = defaultManagePorts) =>
   apiRoute(async (request) => {
     const p = ports(),
@@ -423,92 +448,107 @@ export const executeAction = (
           })
           .strict(),
       );
-    if (!uuid.safeParse(operationId).success)
-      throw new ApiError(404, "not_found");
-    let claimed: { claimed: boolean; operation: Operation };
-    try {
-      claimed = await p.store.rpc("ads_operation_begin", {
-        p_user: a.user_id,
-        p_account: a.id,
-        p_operation: operationId,
-        p_hash: body.plan_hash,
-        p_confirm: body.confirm_spend,
-      });
-    } catch (e) {
-      failure(e);
-    }
-    if (!claimed.claimed)
-      return respond(
-        claimed.operation,
-        claimed.operation.state === "executing"
-          ? 202
-          : claimed.operation.state === "succeeded"
-            ? 200
-            : 409,
-      );
-    const o = claimed.operation;
-    const finish = (state: string, result: unknown) =>
-      p.store.rpc("ads_operation_finish", {
-        p_user: a.user_id,
-        p_account: a.id,
-        p_operation: o.id,
-        p_state: state,
-        p_result: result,
-      });
-    try {
-      const fresh = await account(a.user_id, id, p),
-        pol = await policy(fresh, p);
-      if (
-        fresh.revision !== o.account_revision ||
-        pol.revision !== o.policy_revision
-      )
-        throw new ApiError(409, "ads_connection_changed");
-      const current = await plan(fresh, pol, o.plan.action, p, false);
-      if (
-        stable(current.dependencies) !== stable(o.plan.dependencies) ||
-        stable(current.budget) !== stable(o.plan.budget)
-      )
-        throw new ApiError(409, "ads_plan_changed");
-    } catch (e) {
-      const code = e instanceof ApiError ? e.message : "preflight_failed";
-      const result = await finish("cancelled", { error: code });
-      return respond(result, e instanceof ApiError ? e.status : 503);
-    }
-    try {
-      const result = await p.writer.mutate(
-        a.ad_account_id,
-        token(a, p),
-        o.plan.action,
-      );
-      const value = {
-        ...result,
-        ads_manager_url: `https://adsmanager.facebook.com/adsmanager/manage/${o.plan.action.action.startsWith("adset") ? "adsets" : o.plan.action.action.startsWith("ad.") ? "ads" : "campaigns"}?act=${a.ad_account_id}`,
-      };
-      return respond(await finish("succeeded", value));
-    } catch (e) {
-      const uncertain = !(e instanceof WriteMetaError) || e.uncertain;
-      const code =
-        e instanceof ApiError ? e.message : "execution_result_unavailable";
-      let value;
-      try {
-        value = await finish(uncertain ? "uncertain" : "failed", {
-          error: code,
-          ...(e instanceof WriteMetaError
-            ? {
-                provider_code: e.providerCode,
-                provider_subcode: e.providerSubcode,
-              }
-            : {}),
-        });
-      } catch {
-        throw new ApiError(503, "execution_result_unavailable");
-      }
-      return respond(
-        value,
-        uncertain ? 409 : e instanceof ApiError ? e.status : 503,
-      );
-    }
+    return executeManaged(
+      a,
+      operationId,
+      body.plan_hash,
+      body.confirm_spend,
+      p,
+    );
   });
+export async function executeManaged(
+  a: AdsAccount,
+  operationId: string,
+  planHash: string,
+  confirm: boolean,
+  p: ManagePorts,
+) {
+  if (!uuid.safeParse(operationId).success)
+    throw new ApiError(404, "not_found");
+  let claimed: { claimed: boolean; operation: Operation };
+  try {
+    claimed = await p.store.rpc("ads_operation_begin", {
+      p_user: a.user_id,
+      p_account: a.id,
+      p_operation: operationId,
+      p_hash: planHash,
+      p_confirm: confirm,
+    });
+  } catch (e) {
+    failure(e);
+  }
+  if (!claimed.claimed)
+    return respond(
+      claimed.operation,
+      claimed.operation.state === "executing"
+        ? 202
+        : claimed.operation.state === "succeeded"
+          ? 200
+          : 409,
+    );
+  const o = claimed.operation;
+  const finish = (state: string, result: unknown) =>
+    p.store.rpc("ads_operation_finish", {
+      p_user: a.user_id,
+      p_account: a.id,
+      p_operation: o.id,
+      p_state: state,
+      p_result: result,
+    });
+  try {
+    const fresh = await account(a.user_id, a.id, p),
+      pol = await policy(fresh, p);
+    if (
+      fresh.revision !== o.account_revision ||
+      pol.revision !== o.policy_revision
+    )
+      throw new ApiError(409, "ads_connection_changed");
+    const current = await plan(fresh, pol, o.plan.action, p, false);
+    if (
+      stable(current.dependencies) !== stable(o.plan.dependencies) ||
+      stable(current.budget) !== stable(o.plan.budget)
+    )
+      throw new ApiError(409, "ads_plan_changed");
+  } catch (e) {
+    const code = e instanceof ApiError ? e.message : "preflight_failed";
+    const result = await finish("cancelled", { error: code });
+    return respond(result, e instanceof ApiError ? e.status : 503);
+  }
+  try {
+    const result = await p.writer.mutate(
+      a.ad_account_id,
+      token(a, p),
+      o.plan.action,
+    );
+    const value = {
+      ...result,
+      ads_manager_url: `https://adsmanager.facebook.com/adsmanager/manage/${o.plan.action.action.startsWith("adset") ? "adsets" : o.plan.action.action.startsWith("ad.") ? "ads" : "campaigns"}?act=${a.ad_account_id}`,
+    };
+    return respond(await finish("succeeded", value));
+  } catch (e) {
+    const uncertain = !(e instanceof WriteMetaError) || e.uncertain;
+    const code =
+      e instanceof ApiError ? e.message : "execution_result_unavailable";
+    let value;
+    try {
+      value = await finish(uncertain ? "uncertain" : "failed", {
+        error: code,
+        ...(e instanceof WriteMetaError
+          ? {
+              provider_code: e.providerCode,
+              provider_subcode: e.providerSubcode,
+            }
+          : {}),
+      });
+    } catch {
+      throw new ApiError(503, "execution_result_unavailable");
+    }
+    return respond(
+      value,
+      uncertain ? 409 : e instanceof ApiError ? e.status : 503,
+    );
+  }
+}
 export const listAssets = (
   id: string,
   kind: "pages" | "images" | "videos" | "instagram",
@@ -535,4 +575,145 @@ export const listAssets = (
         q.get("after") ?? undefined,
       ),
     );
+  });
+
+async function resourceDependencies(
+  a: AdsAccount,
+  action: ResourceAction,
+  p: ManagePorts,
+  deps: Record<string, unknown>,
+) {
+  const access = token(a, p),
+    params = action.params as Record<string, unknown>;
+  const find = async (kind: ResourceKind, id: string, parent?: string) => {
+    let after: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const result = await p.writer.resources(
+        a.ad_account_id,
+        access,
+        kind,
+        parent,
+        after,
+      );
+      const row = result.data.find((r) => r.id === id);
+      if (row) {
+        deps[`${kind}:${id}`] = { id: row.id, name: row.name };
+        return;
+      }
+      if (!result.next_cursor) break;
+      if (result.next_cursor === after)
+        throw new WriteMetaError("meta_invalid_response");
+      after = result.next_cursor;
+    }
+    throw new ApiError(404, "ads_resource_not_found");
+  };
+  if (params.business_id) {
+    deps.business = await p.writer.business(
+      a.ad_account_id,
+      access,
+      String(params.business_id),
+    );
+    if (action.action !== "catalog.create")
+      await find(
+        "catalogs",
+        String(
+          params.catalog_id ?? ("object_id" in action ? action.object_id : ""),
+        ),
+        String(params.business_id),
+      );
+  }
+  if ("object_id" in action) {
+    if (action.action === "pixel.update")
+      await find("pixels", action.object_id);
+    if (
+      action.action === "audience.update" ||
+      action.action === "audience.users.add"
+    )
+      await find("audiences", action.object_id);
+    if (action.action === "product.update")
+      await find("products", action.object_id, String(params.catalog_id));
+    if (action.action === "productset.update")
+      await find("productsets", action.object_id, String(params.catalog_id));
+  }
+  if (params.pixel_id) await find("pixels", String(params.pixel_id));
+  if (params.origin_audience_id)
+    await find("audiences", String(params.origin_audience_id));
+  for (const field of ["image_url", "url"])
+    if (params[field]) await p.resolve(String(params[field]));
+}
+export const listResources = (
+  id: string,
+  kind: ResourceKind,
+  ports = defaultManagePorts,
+) =>
+  apiRoute(async (request) => {
+    const p = ports(),
+      a = await account(await owner(request), id, p),
+      q = new URL(request.url).searchParams;
+    const query = z
+      .object({
+        after: z
+          .string()
+          .min(1)
+          .max(2048)
+          .refine((v) => !/[\r\n]/.test(v))
+          .optional(),
+        business_id: z
+          .string()
+          .regex(/^\d{1,30}$/)
+          .optional(),
+        catalog_id: z
+          .string()
+          .regex(/^\d{1,30}$/)
+          .optional(),
+      })
+      .strict()
+      .safeParse(Object.fromEntries(q));
+    if (!query.success || [...q.keys()].some((k) => q.getAll(k).length !== 1))
+      throw new ApiError(400, "invalid_query");
+    const { business_id, catalog_id, after } = query.data;
+    if (["catalogs", "products", "productsets"].includes(kind)) {
+      if (!business_id || (kind !== "catalogs" && !catalog_id))
+        throw new ApiError(400, "business_and_catalog_required");
+      const fake: ResourceAction = catalog_id
+        ? {
+            action: "catalog.update",
+            object_id: catalog_id,
+            params: { business_id, name: "read" },
+          }
+        : {
+            action: "catalog.create",
+            params: { business_id, name: "read", vertical: "commerce" },
+          };
+      await resourceDependencies(a, fake, p, {});
+    } else if (business_id || catalog_id)
+      throw new ApiError(400, "invalid_query");
+    return respond(
+      await p.writer.resources(
+        a.ad_account_id,
+        token(a, p),
+        kind,
+        catalog_id ?? business_id,
+        after,
+      ),
+    );
+  });
+
+export const getPixelCode = (
+  id: string,
+  pixelId: string,
+  ports = defaultManagePorts,
+) =>
+  apiRoute(async (request) => {
+    const p = ports(),
+      a = await account(await owner(request), id, p);
+    if (!/^\d{1,30}$/.test(pixelId) || new URL(request.url).search)
+      throw new ApiError(400, "invalid_query");
+    await resourceDependencies(
+      a,
+      { action: "pixel.update", object_id: pixelId, params: { name: "read" } },
+      p,
+      {},
+    );
+    return respond(await p.writer.pixelCode(pixelId, token(a, p)));
   });

@@ -1,3 +1,6 @@
+import { monitorCredentials } from "../src/lib/ads/credentials";
+import { drainOptimization } from "../src/lib/ads/optimization";
+import { transportStore } from "../src/lib/transport/store";
 import { processTransportJobs } from "../src/lib/transport/worker";
 import { processDueJobs } from "../src/lib/automation/engine";
 import { POST as maintenance } from "../src/app/api/cron/process-jobs/route";
@@ -68,6 +71,7 @@ async function main() {
     legacyLoop(),
     publishingLoop(),
     insightsLoop(),
+    advertisingLoop(),
   ]);
 }
 async function insightsLoop() {
@@ -90,3 +94,30 @@ main().catch(() => {
   console.error("Worker configuration invalid");
   process.exitCode = 1;
 });
+
+async function advertisingLoop() {
+  let nextHealth = 0,
+    nextPoll = 0;
+  while (!stopping) {
+    try {
+      if (Date.now() >= nextPoll) {
+        await drainOptimization(transportStore);
+        nextPoll = Date.now() + 60_000;
+      }
+      if (!stopping && Date.now() >= nextHealth) {
+        await monitorCredentials(transportStore);
+        nextHealth = Date.now() + 3600_000;
+      }
+    } catch {
+      console.error(
+        JSON.stringify({
+          scope: "worker",
+          error: "ads_optimization_unavailable",
+        }),
+      );
+      nextPoll = Date.now() + 60_000;
+      nextHealth = Date.now() + 3600_000;
+    }
+    if (!stopping) await sleep(2000);
+  }
+}

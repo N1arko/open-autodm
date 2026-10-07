@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ApiError } from "@/lib/transport/api";
 import { metaId } from "./queries";
 import { actionEdge, paramsFor, type Action } from "./actions";
+import { isResource, resourcePath, type ResourceKind } from "./resourceActions";
 
 export class WriteMetaError extends ApiError {
   constructor(
@@ -55,7 +56,8 @@ export function writeMeta(
     timeoutMs = 12000,
   ) {
     if (
-      !/^(act_)?\d{1,30}(\/(campaigns|adsets|ads|adcreatives|advideos|adimages|promote_pages|instagram_accounts))?$/.test(
+      path !== "debug_token" &&
+      !/^(act_)?\d{1,30}(\/(campaigns|adsets|ads|adcreatives|advideos|adimages|promote_pages|instagram_accounts|adspixels|customaudiences|owned_product_catalogs|owned_ad_accounts|client_ad_accounts|products|product_sets|users))?$/.test(
         path,
       )
     )
@@ -135,6 +137,16 @@ export function writeMeta(
     }
     return data;
   }
+  function cursorFor(data: Record<string, unknown>) {
+    const paging = data.paging as
+      | { next?: unknown; cursors?: { after?: unknown } }
+      | undefined;
+    if (!paging?.next) return null;
+    const c = paging.cursors?.after;
+    if (typeof c !== "string" || !c || c.length > 2048 || /[\r\n]/.test(c))
+      throw new WriteMetaError("meta_invalid_response");
+    return c;
+  }
   const id = (s: string) => {
     if (!metaId.safeParse(s).success)
       throw new ApiError(400, "invalid_meta_id");
@@ -155,6 +167,20 @@ export function writeMeta(
     return p.data;
   };
   return {
+    async credential(token: string) {
+      const data = await call("debug_token", token, { input_token: token });
+      const schema = z.object({
+        is_valid: z.boolean(),
+        app_id: metaId.optional(),
+        type: z.string().max(100).optional(),
+        expires_at: z.number().int().nonnegative().optional(),
+        data_access_expires_at: z.number().int().nonnegative().optional(),
+        scopes: z.array(z.string().max(200)).max(100).default([]),
+      });
+      const result = schema.safeParse(data.data);
+      if (!result.success) throw new WriteMetaError("meta_invalid_response");
+      return result.data;
+    },
     async object(account: string, object: string, kind: string, token: string) {
       const fields =
         kind === "campaign"
@@ -278,11 +304,99 @@ export function writeMeta(
         next_cursor: paging?.next ? (cursor as string) : null,
       };
     },
+    async pixelCode(pixel: string, token: string) {
+      const data = await call(id(pixel), token, { fields: "id,code" });
+      const parsed = z
+        .object({ id: metaId, code: z.string().max(16000) })
+        .safeParse(data);
+      if (!parsed.success || parsed.data.id !== pixel)
+        throw new WriteMetaError("meta_invalid_response");
+      return parsed.data;
+    },
+    async business(account: string, token: string, business: string) {
+      const data = await call(`act_${id(account)}`, token, {
+        fields: "id,account_id,business",
+      });
+      if (data.account_id !== account)
+        throw new WriteMetaError("meta_invalid_response");
+      const direct = data.business as { id?: string } | undefined;
+      if (direct?.id === business) return { id: business, account_id: account };
+      // A business may manage a client account without owning it.
+      for (const edge of ["owned_ad_accounts", "client_ad_accounts"]) {
+        let after: string | undefined;
+        for (let page = 0; page < 10; page++) {
+          const d = await call(`${id(business)}/${edge}`, token, {
+            fields: "id,account_id",
+            limit: "50",
+            ...(after ? { after } : {}),
+          });
+          if (!Array.isArray(d.data))
+            throw new WriteMetaError("meta_invalid_response");
+          if (
+            d.data.some(
+              (r: { account_id?: string }) => r.account_id === account,
+            )
+          )
+            return { id: business, account_id: account };
+          const next = cursorFor(d);
+          if (!next) break;
+          if (next === after) throw new WriteMetaError("meta_invalid_response");
+          after = next;
+        }
+      }
+      throw new ApiError(404, "business_account_not_linked");
+    },
+    async resources(
+      account: string,
+      token: string,
+      kind: ResourceKind,
+      parent?: string,
+      after?: string,
+    ) {
+      const edge = {
+        pixels: "adspixels",
+        audiences: "customaudiences",
+        catalogs: "owned_product_catalogs",
+        products: "products",
+        productsets: "product_sets",
+      }[kind];
+      const fields = {
+        pixels: "id,name",
+        audiences:
+          "id,account_id,name,subtype,description,retention_days,delivery_status,operation_status",
+        catalogs: "id,name,vertical",
+        products: "id,name,retailer_id,price,currency,availability",
+        productsets: "id,name",
+      }[kind];
+      const data = await call(
+        `${parent ? id(parent) : `act_${id(account)}`}/${edge}`,
+        token,
+        { fields, limit: "50", ...(after ? { after } : {}) },
+      );
+      const rows = z
+        .array(
+          z
+            .object({ id: metaId, name: z.string().max(1000).optional() })
+            .passthrough(),
+        )
+        .max(50)
+        .safeParse(data.data);
+      if (
+        !rows.success ||
+        (kind === "audiences" &&
+          rows.data.some((r) => r.account_id !== account))
+      )
+        throw new WriteMetaError("meta_invalid_response");
+      return { data: rows.data, next_cursor: cursorFor(data) };
+    },
     async mutate(account: string, token: string, a: Action, validate = false) {
+      if (validate && isResource(a))
+        throw new ApiError(400, "resource_validation_unavailable");
       if (validate && a.action === "video.upload")
         throw new ApiError(400, "video_validation_unavailable");
-      const path =
-        "object_id" in a
+      const path = isResource(a)
+        ? resourcePath(id(account), a)
+        : "object_id" in a
           ? id(a.object_id)
           : `act_${id(account)}/${actionEdge[a.action]}`;
       const data = await call(
@@ -301,6 +415,31 @@ export function writeMeta(
         if (data.success !== true)
           throw new WriteMetaError("meta_invalid_validation_response");
         return { validated: true };
+      }
+      if (a.action === "audience.users.add") {
+        const parsed = z
+          .object({
+            audience_id: z.union([
+              metaId,
+              z.number().int().safe().nonnegative(),
+            ]),
+            num_received: z.number().int().nonnegative(),
+            num_invalid_entries: z.number().int().nonnegative(),
+          })
+          .safeParse(data);
+        if (
+          !parsed.success ||
+          String(parsed.data.audience_id) !== a.object_id ||
+          parsed.data.num_received > a.params.payload.data.length ||
+          parsed.data.num_invalid_entries > parsed.data.num_received
+        )
+          throw new WriteMetaError("meta_invalid_response", true);
+        return {
+          object_id: a.object_id,
+          success: true,
+          num_received: parsed.data.num_received,
+          num_invalid_entries: parsed.data.num_invalid_entries,
+        };
       }
       if ("object_id" in a) {
         if (data.success !== true)

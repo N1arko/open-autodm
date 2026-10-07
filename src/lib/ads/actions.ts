@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ApiError } from "@/lib/transport/api";
 import { metaId } from "./queries";
+import { resourceOptions, isResource, resourceParams } from "./resourceActions";
 
 const name = z.string().trim().min(1).max(200);
 export const money = z.string().regex(/^[1-9][0-9]{0,14}$/);
@@ -291,6 +292,7 @@ export const actionInput = z
         params: change({ name, status, creative_id: metaId }),
       })
       .strict(),
+    ...resourceOptions,
     z
       .object({
         action: z.literal("video.upload"),
@@ -300,6 +302,40 @@ export const actionInput = z
   ])
   .superRefine((v, ctx) => {
     const p = v.params as Record<string, unknown>;
+    if (isResource(v)) {
+      if (
+        v.action === "audience.users.add" &&
+        v.params.payload.data.some(
+          (row) => row.length !== v.params.payload.schema.length,
+        )
+      )
+        ctx.addIssue({ code: "custom", message: "audience_columns_mismatch" });
+      if (
+        v.action.endsWith(".update") &&
+        Object.keys(p).filter((k) => !["business_id", "catalog_id"].includes(k))
+          .length === 0
+      )
+        ctx.addIssue({ code: "custom", message: "empty_update" });
+      if (v.action === "audience.create") {
+        if (p.subtype === "WEBSITE" && (!p.pixel_id || !p.rule))
+          ctx.addIssue({
+            code: "custom",
+            message: "website_audience_requires_pixel_and_rule",
+          });
+        if (
+          p.subtype === "LOOKALIKE" &&
+          (!p.origin_audience_id || !p.lookalike_spec)
+        )
+          ctx.addIssue({
+            code: "custom",
+            message: "lookalike_requires_source_and_spec",
+          });
+        if (["ENGAGEMENT", "VIDEO"].includes(String(p.subtype)) && !p.rule)
+          ctx.addIssue({ code: "custom", message: "engagement_requires_rule" });
+        if (p.subtype === "CUSTOM" && !p.customer_file_source)
+          ctx.addIssue({ code: "custom", message: "customer_source_required" });
+      }
+    }
     if (p.daily_budget && p.lifetime_budget)
       ctx.addIssue({ code: "custom", message: "choose_one_budget" });
     if (
@@ -340,6 +376,7 @@ export function stable(value: unknown): string {
   return JSON.stringify(value);
 }
 export function paramsFor(a: Action): Record<string, unknown> {
+  if (isResource(a)) return resourceParams(a);
   const p = { ...a.params } as Record<string, unknown>;
   if (a.action.endsWith(".create") && a.action !== "creative.create")
     p.status = "PAUSED";
@@ -397,7 +434,7 @@ export function paramsFor(a: Action): Record<string, unknown> {
   }
   return p;
 }
-export const actionEdge: Record<Action["action"], string> = {
+export const actionEdge: Partial<Record<Action["action"], string>> = {
   "campaign.create": "campaigns",
   "campaign.update": "",
   "adset.create": "adsets",

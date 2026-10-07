@@ -19,7 +19,7 @@ The numeric ID or `act_` prefix is accepted. The service verifies the account's 
 
 The returned `id` is the **internal UUID** used below; `ad_account_id` is Meta's numeric ID. Independently authorized owners can connect the same ad account without sharing credentials. Advertising identities returned by Meta are separate from the internal Instagram UUIDs used for publishing and DM; do not infer that one authorizes the other.
 
-Tokens are AES-256-GCM encrypted and never returned by these APIs. These tables and RPCs are service-role only; an ordinary Supabase client cannot read encrypted credentials. Tokens are not inspected for expiry and are not refreshed automatically. A blank/unknown expiry does not mean permanent validity. Use a suitable system-user token for unattended operation, or replace an expiring user token before it expires. Revoked permissions/expired tokens produce explicit errors. Saving a token does not grant Meta permissions.
+Tokens are AES-256-GCM encrypted and never returned by these APIs. These tables and RPCs are service-role only; an ordinary Supabase client cannot read encrypted credentials. The dedicated `/credentials/status` endpoint and worker inspect expiry/permissions; the ordinary account GET retains its legacy `credential_expiry:not_inspected` label. Facebook user tokens are not refreshed automatically. A blank/unknown expiry does not mean permanent validity. Use a suitable system-user token for unattended operation, or replace an expiring user token before it expires. Revoked permissions/expired tokens produce explicit errors. Saving a token does not grant Meta permissions.
 
 ## Endpoints
 
@@ -86,10 +86,12 @@ Upstream operations have a 12-second timeout and a 1 MiB response limit. There a
 | 502  | `meta_unavailable`, `meta_rejected`, `meta_invalid_response`, `meta_invalid_timezone` |
 | 503  | `service_unavailable`                                                                 |
 
-Provider error messages, tokens and raw provider paging URLs are never returned. The core owner API has no endpoint for accepting arbitrary Marketing API calls. Later advertising writes will require their own constrained contract, budgets and audit trail.
+Provider error messages, tokens and raw provider paging URLs are never returned. The core owner API has no endpoint for accepting arbitrary Marketing API calls. Advertising writes use the constrained preparation/execution contract, budget limits and audit trail in [ADS_MANAGEMENT_API.md](ADS_MANAGEMENT_API.md).
 
 ## Official references
 
 - [Meta Marketing API collection, access and account model](https://www.postman.com/meta/facebook-marketing-api/documentation/0zr4mes/facebook-marketing-api-mapi?entity=request-31691153-7fe71e07-6a6f-4b86-b098-02788f138d0b)
 - [Meta account Insights example](https://www.postman.com/meta/facebook-marketing-api/request/u38qbri/get-insight-details-from-an-adaccount-l4)
 - [Meta report time range and increments](https://www.postman.com/meta/facebook-marketing-api/request/gdbk43j/getreportforinsight2)
+
+Advertising resources, background rules and credential expiry: [ADS_AUTOMATION_API.md](ADS_AUTOMATION_API.md).

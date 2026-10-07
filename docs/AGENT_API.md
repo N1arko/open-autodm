@@ -88,3 +88,5 @@ curl --fail-with-body "$AUTODM_URL/api/instagram/accounts" \
 ```
 
 Read the current state before changing a binding. Store returned integration secrets before completing setup. Reuse the same `Idempotency-Key` when retrying an outgoing reply. Treat `202 queued` as acceptance into the queue; check its state to confirm delivery. A `delivery_unknown` result requires inspecting the actual conversation before another send.
+
+Advertising resource creation, durable rule-based optimization and credential monitoring: [ADS_AUTOMATION_API.md](ADS_AUTOMATION_API.md).
