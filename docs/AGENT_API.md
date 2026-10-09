@@ -74,6 +74,10 @@ See [PUBLISHING_API.md](PUBLISHING_API.md) for scheduling, cancellation, idempot
 
 Use the same owner credential to read account/media metrics, audience breakdowns and saved observation history. Configure opt-in daily collection per account through `PUT /api/v1/accounts/{id}/insights/settings`. Generate additional consent with `GET /api/instagram/connect?insights=true`; combine with `publishing=true` when both are needed. See [INSIGHTS_API.md](INSIGHTS_API.md) for endpoints, dates, metric availability and comparison of snapshots.
 
+## Meta advertising accounts
+
+The owner API can connect Meta Marketing API credentials and read advertising account status, campaigns, ad sets, ads, advertising Instagram identities and Insights. Connect through `POST /api/v1/ads/accounts`; use the returned internal UUID on subsequent requests. These tokens and IDs are independent of Instagram Login. Read endpoints are described in [ADS_API.md](ADS_API.md). Separately authorized management supports paused campaign/ad-set/ad creation, image/video and existing-post creatives, activation, pausing and budget/targeting/creative changes through a durable plan/execute API. See [ADS_MANAGEMENT_API.md](ADS_MANAGEMENT_API.md) for per-account enablement, budget limits, idempotency and uncertain-result handling.
+
 ## Minimal client
 
 Provide the secret through the agent's credential store/environment, then call the API:
@@ -84,3 +88,5 @@ curl --fail-with-body "$AUTODM_URL/api/instagram/accounts" \
 ```
 
 Read the current state before changing a binding. Store returned integration secrets before completing setup. Reuse the same `Idempotency-Key` when retrying an outgoing reply. Treat `202 queued` as acceptance into the queue; check its state to confirm delivery. A `delivery_unknown` result requires inspecting the actual conversation before another send.
+
+Advertising resource creation, durable rule-based optimization and credential monitoring: [ADS_AUTOMATION_API.md](ADS_AUTOMATION_API.md).
