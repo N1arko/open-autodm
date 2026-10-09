@@ -922,6 +922,54 @@ test("existing-post destinations that stop resolving publicly cannot be created 
   assert.equal((await r.json()).state, "cancelled");
   assert.equal(posts.length, 1);
 });
+test("device and occupation targeting survive validation, preparation and paused ad-set creation", async () => {
+  await enable();
+  const targeting = {
+    geo_locations: { countries: ["US"] },
+    device_platforms: ["mobile"],
+    user_os: ["iOS"],
+    user_device: ["iPhone"],
+    publisher_platforms: ["instagram"],
+    flexible_spec: [{ interests: [{ id: "800" }], work_positions: [{ id: "801" }] }],
+    targeting_automation: { advantage_audience: 0 },
+  };
+  const action = {
+    action: "adset.create",
+    params: {
+      name: "US iPhone musicians",
+      campaign_id: "100",
+      optimization_goal: "LINK_CLICKS",
+      billing_event: "IMPRESSIONS",
+      targeting,
+    },
+  };
+  const validated = await validateAction(connection, ports)(req(action));
+  assert.equal(validated.status, 200);
+  assert.equal((await validated.json()).meta_validated, true);
+  const o = await prepare(action);
+  assert.deepEqual(o.plan.action.params.targeting, targeting);
+  const done = await execute(o, true);
+  assert.equal(done.status, 200);
+  assert.equal((await done.json()).state, "succeeded");
+  assert.equal(posts.length, 2);
+  assert.deepEqual(JSON.parse(posts[0]!.params.targeting!), targeting);
+  assert.deepEqual(JSON.parse(posts[1]!.params.targeting!), targeting);
+  assert.equal(posts[0]!.params.execution_options, '["validate_only"]');
+  assert.equal(posts[1]!.params.status, "PAUSED");
+  for (const invalid of [
+    { user_device: [] },
+    { user_os: [42] },
+    { device_platforms: ["anything"] },
+    { flexible_spec: [{ work_positions: [{ id: "bad-id" }] }] },
+  ]) {
+    const r = await prepareAction(connection, ports)(req({
+      ...action,
+      params: { ...action.params, targeting: { ...targeting, ...invalid } },
+    }));
+    assert.equal(r.status, 400);
+  }
+  assert.equal(posts.length, 2);
+});
 test("Meta refusal or invalid validation blocks Instagram creatives even when the profile is listed", async () => {
   await enable();
   for (const [m, status, code] of [

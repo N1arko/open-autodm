@@ -20,6 +20,7 @@ const budget = {
   lifetime_budget: money.optional(),
 };
 const named = z.array(z.object({ id: metaId }).strict()).max(100);
+const deviceNames = z.array(z.string().trim().min(1).max(100)).min(1).max(100);
 export const targetingInput = z
   .object({
     geo_locations: z
@@ -32,6 +33,13 @@ export const targetingInput = z
       .strict(),
     age_min: z.number().int().min(18).max(65).optional(),
     age_max: z.number().int().min(18).max(65).optional(),
+    device_platforms: z
+      .array(z.enum(["mobile", "desktop", "connected_tv"]))
+      .min(1)
+      .max(3)
+      .optional(),
+    user_os: deviceNames.optional(),
+    user_device: deviceNames.optional(),
     genders: z
       .array(z.union([z.literal(1), z.literal(2)]))
       .min(1)
@@ -75,7 +83,11 @@ export const targetingInput = z
     flexible_spec: z
       .array(
         z
-          .object({ interests: named.optional(), behaviors: named.optional() })
+          .object({
+            interests: named.optional(),
+            behaviors: named.optional(),
+            work_positions: named.optional(),
+          })
           .strict(),
       )
       .min(1)
