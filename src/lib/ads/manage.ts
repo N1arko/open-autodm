@@ -34,6 +34,8 @@ import {
   type MetaObject,
   type Writer,
 } from "./writeMeta";
+import { stagedImage, imageBytes } from "./uploads";
+import { templateVersion } from "./templates";
 
 export interface ManagePorts extends AdsPorts {
   writer: Writer;
@@ -63,6 +65,7 @@ export const defaultManagePorts = (): ManagePorts => ({
 });
 export interface Plan {
   action: Action;
+  effective_action?: Action;
   currency: string;
   dependencies: Record<string, unknown>;
   requires_spend_confirmation: boolean;
@@ -145,6 +148,7 @@ async function plan(
     };
   }
   let validateInstagramCreative = false;
+  let effectiveAction = action;
   const object = async (id: string, kind: string) => {
     const v = await p.writer.object(a.ad_account_id, id, kind, access);
     deps[`${kind}:${id}`] = v;
@@ -160,7 +164,10 @@ async function plan(
       if (row) {
         if (
           kind === "videos" &&
-          (!("status" in row) || row.status?.video_status !== "ready")
+          (!("status" in row) ||
+            !row.status ||
+            typeof row.status === "string" ||
+            row.status.video_status !== "ready")
         )
           throw new ApiError(409, "video_not_ready");
         deps[`${kind}:${id}`] = row;
@@ -198,10 +205,80 @@ async function plan(
   if ("creative_id" in params && params.creative_id)
     await object(String(params.creative_id), "creative");
   if (action.action === "video.upload") await p.resolve(action.params.file_url);
+  if (action.action === "image.upload") {
+    if (validate) throw new ApiError(400, "image_validation_unavailable");
+    const row = await stagedImage(a, action.params.upload_id, p);
+    deps[`image_upload:${row.id}`] = {
+      id: row.id,
+      metadata: row.metadata,
+      expires_at: row.expires_at,
+    };
+  }
   if (action.action === "creative.create") {
     const c = action.params.creative;
+    if (c.kind === "instagram_direct") {
+      const group = await object(c.adset_id, "adset");
+      if (!group.campaign_id) throw new WriteMetaError("meta_invalid_response");
+      const parent = await object(group.campaign_id, "campaign");
+      if (
+        parent.objective !== "OUTCOME_ENGAGEMENT" ||
+        group.optimization_goal !== "CONVERSATIONS" ||
+        group.billing_event !== "IMPRESSIONS" ||
+        group.destination_type !== "INSTAGRAM_DIRECT" ||
+        group.promoted_object?.page_id !== c.page_id
+      )
+        throw new ApiError(409, "direct_adset_configuration_mismatch");
+      const linked = await p.writer.pageInstagram(c.page_id, access);
+      if (
+        ![
+          linked.instagram_business_account?.id,
+          linked.connected_instagram_account?.id,
+        ].includes(c.instagram_user_id)
+      )
+        throw new ApiError(409, "page_instagram_identity_mismatch");
+      const profile = await p.writer.instagram(c.instagram_user_id, access);
+      if (!("ig_id" in profile) || profile.ig_id !== c.instagram_legacy_id)
+        throw new ApiError(409, "instagram_legacy_identity_mismatch");
+      deps[`page_link:${c.page_id}`] = linked;
+      deps[`instagram_profile:${c.instagram_user_id}`] = {
+        id: profile.id,
+        ig_id: profile.ig_id,
+      };
+      if (c.template) {
+        const t = await templateVersion(
+          a,
+          c.template.id,
+          c.template.version,
+          p,
+        );
+        deps[`template:${t.id}:${t.version}`] = t;
+        const { template: _template, ...fields } = c;
+        effectiveAction = {
+          ...action,
+          params: {
+            ...action.params,
+            creative: { ...fields, welcome: t.body },
+          },
+        };
+      }
+      if (c.media.kind === "image") await asset("images", c.media.image_hash);
+      else {
+        await asset("videos", c.media.video_id);
+        await asset("images", c.media.thumbnail_hash);
+      }
+    }
     if (c.kind === "instagram_post" && c.link) await p.resolve(c.link);
+    if (c.kind === "carousel") {
+      if (c.instagram_user_id) deps[`pages:${c.page_id}`] = { id: c.page_id };
+      else await asset("pages", c.page_id);
+      await p.resolve(c.link);
+      for (const card of c.cards) {
+        await asset("images", card.image_hash);
+        await p.resolve(card.link);
+      }
+    }
     if (c.kind === "image" || c.kind === "video") {
+      if (c.link) await p.resolve(c.link);
       if (c.instagram_user_id) {
         // promote_pages can omit a usable Page, just like instagram_accounts.
         // Exact Meta validation below checks both identities again on execution.
@@ -223,6 +300,51 @@ async function plan(
     }
     if (c.kind === "facebook_post")
       await asset("pages", c.object_story_id.split("_")[0]!);
+    if ("asset_feed_spec" in c && c.asset_feed_spec) {
+      for (const image of c.asset_feed_spec.images ?? [])
+        await asset("images", image.hash);
+      for (const video of c.asset_feed_spec.videos ?? []) {
+        await asset("videos", video.video_id);
+        if (video.thumbnail_hash) await asset("images", video.thumbnail_hash);
+        if (video.thumbnail_url) await p.resolve(video.thumbnail_url);
+      }
+      for (const link of c.asset_feed_spec.link_urls ?? [])
+        await p.resolve(link.website_url);
+    }
+    if (c.media_sourcing_spec) {
+      const source = c.media_sourcing_spec.source_creative_id;
+      let ownedHashes: string[] = [];
+      if (source) {
+        const original = await p.writer.creative(
+          a.ad_account_id,
+          source,
+          access,
+        );
+        const media = original.media_sourcing_spec as
+          | { images?: { hash?: string }[] }
+          | undefined;
+        ownedHashes = (media?.images ?? [])
+          .map((v) => v.hash)
+          .filter((v): v is string => !!v)
+          .sort();
+        deps[`source_creative:${source}`] = {
+          id: source,
+          account_id: a.ad_account_id,
+          hashes: ownedHashes,
+        };
+      }
+      for (const image of c.media_sourcing_spec.images)
+        if (!ownedHashes.includes(image.hash))
+          await asset("images", image.hash);
+    }
+    if (
+      c.kind === "carousel" ||
+      c.degrees_of_freedom_spec ||
+      c.contextual_multi_ads ||
+      c.media_sourcing_spec ||
+      ("asset_feed_spec" in c && c.asset_feed_spec)
+    )
+      validateInstagramCreative = true;
   }
   const changingBudget = !!(params.daily_budget || params.lifetime_budget);
   const risk =
@@ -295,9 +417,12 @@ async function plan(
     throw new ApiError(400, "lifetime_budget_requires_end_time");
   const metaValidated = validate || validateInstagramCreative;
   if (metaValidated)
-    await p.writer.mutate(a.ad_account_id, access, action, true);
+    await p.writer.mutate(a.ad_account_id, access, effectiveAction, true);
   return {
     action,
+    ...(effectiveAction !== action
+      ? { effective_action: effectiveAction }
+      : {}),
     currency: pol.currency,
     dependencies: deps,
     requires_spend_confirmation: risk,
@@ -335,7 +460,7 @@ export const prepareAction = (id: string, ports = defaultManagePorts) =>
       a = await account(await owner(request), id, p);
     const { replayed, ...prepared } = await prepareManaged(
       a,
-      await jsonBody(request, actionInput),
+      await jsonBody(request, actionInput, 32768),
       request.headers.get("Idempotency-Key"),
       p,
     );
@@ -390,7 +515,7 @@ export const validateAction = (id: string, ports = defaultManagePorts) =>
   apiRoute(async (request) => {
     const p = ports(),
       a = await account(await owner(request), id, p),
-      action = await jsonBody(request, actionInput);
+      action = await jsonBody(request, actionInput, 32768);
     if (action.action === "video.upload")
       throw new ApiError(400, "video_validation_unavailable");
     return respond(await plan(a, await policy(a, p), action, p, true));
@@ -488,6 +613,8 @@ export async function executeManaged(
           : 409,
     );
   const o = claimed.operation;
+  let uploadBytes: string | undefined;
+  let uploadMetadata: Record<string, unknown> | undefined;
   const finish = (state: string, result: unknown) =>
     p.store.rpc("ads_operation_finish", {
       p_user: a.user_id,
@@ -510,17 +637,49 @@ export async function executeManaged(
       stable(current.budget) !== stable(o.plan.budget)
     )
       throw new ApiError(409, "ads_plan_changed");
+    if (o.plan.action.action === "image.upload") {
+      const row = await stagedImage(a, o.plan.action.params.upload_id, p);
+      uploadBytes = imageBytes(row, p);
+      uploadMetadata = row.metadata;
+    }
   } catch (e) {
     const code = e instanceof ApiError ? e.message : "preflight_failed";
-    const result = await finish("cancelled", { error: code });
-    return respond(result, e instanceof ApiError ? e.status : 503);
+    const retry =
+      e instanceof ApiError && e.retryAfterSeconds
+        ? {
+            retry_after_seconds: e.retryAfterSeconds,
+            retry_scope: e.retryScope,
+            retry_source: e.retrySource,
+            retryable: true,
+          }
+        : {};
+    const result = await finish("cancelled", { error: code, ...retry });
+    return Response.json(result, {
+      status: e instanceof ApiError ? e.status : 503,
+      headers: {
+        "Cache-Control": "no-store",
+        ...(e instanceof ApiError && e.retryAfterSeconds
+          ? { "Retry-After": String(e.retryAfterSeconds) }
+          : {}),
+      },
+    });
   }
   try {
-    const result = await p.writer.mutate(
-      a.ad_account_id,
-      token(a, p),
-      o.plan.action,
-    );
+    const result =
+      o.plan.action.action === "image.upload"
+        ? {
+            ...uploadMetadata,
+            ...(await p.writer.uploadImage(
+              a.ad_account_id,
+              token(a, p),
+              uploadBytes!,
+            )),
+          }
+        : await p.writer.mutate(
+            a.ad_account_id,
+            token(a, p),
+            o.plan.effective_action ?? o.plan.action,
+          );
     const value = {
       ...result,
       ads_manager_url: `https://adsmanager.facebook.com/adsmanager/manage/${o.plan.action.action.startsWith("adset") ? "adsets" : o.plan.action.action.startsWith("ad.") ? "ads" : "campaigns"}?act=${a.ad_account_id}`,
@@ -538,16 +697,29 @@ export async function executeManaged(
           ? {
               provider_code: e.providerCode,
               provider_subcode: e.providerSubcode,
+              ...(e.retryAfterSeconds
+                ? {
+                    retry_after_seconds: e.retryAfterSeconds,
+                    retry_scope: e.retryScope,
+                    retry_source: e.retrySource,
+                    retryable: false,
+                  }
+                : {}),
             }
           : {}),
       });
     } catch {
       throw new ApiError(503, "execution_result_unavailable");
     }
-    return respond(
-      value,
-      uncertain ? 409 : e instanceof ApiError ? e.status : 503,
-    );
+    return Response.json(value, {
+      status: uncertain ? 409 : e instanceof ApiError ? e.status : 503,
+      headers: {
+        "Cache-Control": "no-store",
+        ...(!uncertain && e instanceof ApiError && e.retryAfterSeconds
+          ? { "Retry-After": String(e.retryAfterSeconds) }
+          : {}),
+      },
+    });
   }
 }
 export const listAssets = (

@@ -371,7 +371,13 @@ test("Meta permission, expiry, rate and server failures stay explicit and preser
     mode = state;
     const r = await getAdsInsights(id, ports)(req("refresh=true"));
     assert.equal(r.status, status);
-    assert.deepEqual(await r.json(), { error });
+    const payload = await r.json();
+    assert.equal(payload.error, error);
+    if (error === "meta_rate_limited") {
+      assert.equal(r.headers.get("Retry-After"), "60");
+      assert.equal(payload.retry_scope, "read");
+      assert.equal(payload.retryable, true);
+    } else assert.deepEqual(payload, { error });
   }
   mode = "ok";
   assert.equal(

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { ApiError } from "@/lib/transport/api";
 import { metaId, type Collection } from "./queries";
+import { isRateLimit, retryAfter } from "./rateLimit";
+import { creativeRead, CREATIVE_FIELDS, providerJson } from "./readback";
 
 const text = z.string().max(1000);
 const numeric = z.union([
@@ -22,29 +24,12 @@ const metadataSchema = z.object({
   disable_reason: z.number().int().optional(),
 });
 export type AdsMetadata = z.infer<typeof metadataSchema>;
-const geo = z.object({
-  countries: z.array(z.string().max(10)).max(250).optional(),
-  regions: z
-    .array(z.object({ key: text, name: text.optional() }))
-    .max(500)
-    .optional(),
-  cities: z
-    .array(
-      z.object({
-        key: text,
-        name: text.optional(),
-        radius: z.number().optional(),
-        distance_unit: text.optional(),
-      }),
-    )
-    .max(500)
-    .optional(),
-});
 const namedIds = z
   .array(z.object({ id: metaId, name: text.optional() }))
   .max(500);
 const targeting = z.object({
-  geo_locations: geo.optional(),
+  geo_locations: providerJson.optional(),
+  excluded_geo_locations: providerJson.optional(),
   age_min: z.number().optional(),
   age_max: z.number().optional(),
   genders: z.array(z.number()).max(10).optional(),
@@ -54,6 +39,12 @@ const targeting = z.object({
   interests: namedIds.optional(),
   custom_audiences: namedIds.optional(),
   excluded_custom_audiences: namedIds.optional(),
+  flexible_spec: providerJson.optional(),
+  targeting_automation: providerJson.optional(),
+  device_platforms: z.array(text).max(20).optional(),
+  user_os: z.array(text).max(100).optional(),
+  user_device: z.array(text).max(100).optional(),
+  locales: z.array(z.number()).max(100).optional(),
 });
 const common = {
   id: metaId,
@@ -70,7 +61,14 @@ const budget = {
   budget_remaining: numeric.optional(),
 };
 const schemas = {
-  campaigns: z.object({ ...common, ...budget, objective: text.optional() }),
+  campaigns: z.object({
+    ...common,
+    ...budget,
+    objective: text.optional(),
+    bid_strategy: text.optional(),
+    spend_cap: numeric.optional(),
+    issues_info: providerJson.optional(),
+  }),
   adsets: z.object({
     ...common,
     ...budget,
@@ -80,20 +78,23 @@ const schemas = {
     optimization_goal: text.optional(),
     billing_event: text.optional(),
     bid_strategy: text.optional(),
+    bid_amount: numeric.optional(),
+    bid_constraints: providerJson.optional(),
+    destination_type: text.optional(),
+    promoted_object: providerJson.optional(),
+    placement_soft_opt_out: providerJson.optional(),
+    attribution_spec: providerJson.optional(),
+    learning_stage_info: providerJson.optional(),
+    issues_info: providerJson.optional(),
     targeting: targeting.optional(),
   }),
   ads: z.object({
     ...common,
     campaign_id: metaId,
     adset_id: metaId,
-    creative: z
-      .object({
-        id: metaId,
-        name: text.optional(),
-        title: text.optional(),
-        body: z.string().max(10000).optional(),
-      })
-      .optional(),
+    creative: creativeRead.optional(),
+    issues_info: providerJson.optional(),
+    ad_review_feedback: providerJson.optional(),
   }),
   instagram_accounts: z.object({ id: metaId, username: text }),
 };
@@ -141,9 +142,9 @@ const insightSchema = z.object({
 const COMMON =
   "id,account_id,name,status,effective_status,created_time,updated_time";
 const fields: Record<Collection, string> = {
-  campaigns: `${COMMON},objective,daily_budget,lifetime_budget,budget_remaining`,
-  adsets: `${COMMON},campaign_id,daily_budget,lifetime_budget,budget_remaining,start_time,end_time,optimization_goal,billing_event,bid_strategy,targeting{geo_locations,age_min,age_max,genders,publisher_platforms,facebook_positions,instagram_positions,interests,custom_audiences,excluded_custom_audiences}`,
-  ads: `${COMMON},campaign_id,adset_id,creative{id,name,title,body}`,
+  campaigns: `${COMMON},objective,daily_budget,lifetime_budget,budget_remaining,bid_strategy,spend_cap,issues_info`,
+  adsets: `${COMMON},campaign_id,daily_budget,lifetime_budget,budget_remaining,start_time,end_time,optimization_goal,billing_event,bid_strategy,bid_amount,bid_constraints,destination_type,promoted_object,placement_soft_opt_out,attribution_spec,learning_stage_info,issues_info,targeting`,
+  ads: `${COMMON},campaign_id,adset_id,issues_info,ad_review_feedback,creative{${CREATIVE_FIELDS}}`,
   instagram_accounts: "id,username",
 };
 const INSIGHT_FIELDS =
@@ -152,6 +153,7 @@ export class AdsMetaError extends ApiError {
   constructor(
     code: string,
     public providerCode = 0,
+    retry?: ReturnType<typeof retryAfter>,
   ) {
     super(
       code === "ads_permission_required"
@@ -163,6 +165,11 @@ export class AdsMetaError extends ApiError {
             : 502,
       code,
     );
+    if (retry) {
+      this.retryAfterSeconds = retry.seconds;
+      this.retrySource = retry.source;
+      this.retryScope = "read";
+    }
   }
 }
 export interface AdsPage {
@@ -193,6 +200,7 @@ export function adsMeta(
     edge: string,
     token: string,
     params: Record<string, string>,
+    attempt = 0,
   ) {
     if (!metaId.safeParse(id).success)
       throw new ApiError(400, "invalid_ad_account_id");
@@ -234,18 +242,28 @@ export function adsMeta(
     if (!res.ok || data.error) {
       const err = data.error as { code?: number } | undefined,
         code = Number.isInteger(err?.code) ? err!.code! : 0;
+      const limited = isRateLimit(res.status, code),
+        retry = limited ? retryAfter(res.headers) : undefined;
+      if (retry && retry.seconds <= 1 && attempt === 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, retry.seconds * 1000),
+        );
+        return call(id, edge, token, params, attempt + 1);
+      }
       throw new AdsMetaError(
-        res.status >= 500
-          ? "meta_unavailable"
-          : code === 190
-            ? "ads_token_unavailable"
-            : res.status === 429 ||
-                [4, 17, 32, 613, 80000, 80004].includes(code)
-              ? "meta_rate_limited"
-              : [10, 200, 294].includes(code) || res.status === 403
-                ? "ads_permission_required"
-                : "meta_rejected",
+        limited
+          ? "meta_rate_limited"
+          : res.status >= 500
+            ? "meta_unavailable"
+            : code === 190
+              ? "ads_token_unavailable"
+              : isRateLimit(res.status, code)
+                ? "meta_rate_limited"
+                : [10, 200, 294].includes(code) || res.status === 403
+                  ? "ads_permission_required"
+                  : "meta_rejected",
         code,
+        retry,
       );
     }
     return data;
@@ -259,7 +277,12 @@ export function adsMeta(
     const parsed = z.array(schema).max(50).safeParse(data.data);
     if (
       !parsed.success ||
-      (accountScoped && parsed.data.some((v) => v.account_id !== id))
+      (accountScoped &&
+        parsed.data.some(
+          (v) =>
+            v.account_id !== id ||
+            (v.creative?.account_id && v.creative.account_id !== id),
+        ))
     )
       throw new AdsMetaError("meta_invalid_response");
     const paging = data.paging as

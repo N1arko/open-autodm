@@ -97,6 +97,8 @@ async function handle(request: Request): Promise<Response> {
 
   await db.rpc('transport_cleanup');
   await db.rpc('insights_cleanup');
+  const { error: imageCleanupError } = await db.rpc('ads_creative_cleanup');
+  if (imageCleanupError) logger.warn({}, 'ads_creative_cleanup failed');
   return Response.json({
     ok: true,
     transportClaimed: transport,

@@ -8,6 +8,9 @@ import { resolveEndpoint } from "./http";
 import { transportStore, type TransportMessage } from "./store";
 
 export class ApiError extends Error {
+  retryAfterSeconds?: number;
+  retryScope?: "read" | "validation" | "write_rejected";
+  retrySource?: "retry_after" | "business_usage" | "default";
   constructor(
     public status: number,
     message: string,
@@ -43,12 +46,13 @@ export async function readBody(request: Request, max = 8192): Promise<string> {
 export async function jsonBody<T extends z.ZodTypeAny>(
   request: Request,
   schema: T,
+  max = 8192,
 ): Promise<z.infer<T>> {
   if (!request.headers.get("content-type")?.includes("application/json"))
     throw new ApiError(415, "json_required");
   let value: unknown;
   try {
-    value = JSON.parse(await readBody(request));
+    value = JSON.parse(await readBody(request, max));
   } catch (e) {
     if (e instanceof ApiError) throw e;
     throw new ApiError(400, "invalid_json");
@@ -62,11 +66,43 @@ export function apiRoute(fn: (request: Request) => Promise<Response>) {
     try {
       return await fn(request);
     } catch (error) {
-      if (error instanceof ApiError)
+      if (error instanceof ApiError) {
+        const retry =
+          Number.isInteger(error.retryAfterSeconds) &&
+          (error.retryAfterSeconds ?? 0) > 0;
         return Response.json(
-          { error: error.message },
-          { status: error.status, headers: { "Cache-Control": "no-store" } },
+          {
+            error: error.message,
+            ...(retry
+              ? {
+                  retry_after_seconds: error.retryAfterSeconds,
+                  retry_scope: error.retryScope,
+                  retry_source: error.retrySource,
+                  retryable:
+                    error.retryScope === "read" ||
+                    error.retryScope === "validation",
+                  ...("providerCode" in error &&
+                  Number.isInteger(error.providerCode)
+                    ? { provider_code: error.providerCode }
+                    : {}),
+                  ...("providerSubcode" in error &&
+                  Number.isInteger(error.providerSubcode)
+                    ? { provider_subcode: error.providerSubcode }
+                    : {}),
+                }
+              : {}),
+          },
+          {
+            status: error.status,
+            headers: {
+              "Cache-Control": "no-store",
+              ...(retry
+                ? { "Retry-After": String(error.retryAfterSeconds) }
+                : {}),
+            },
+          },
         );
+      }
       const message = error instanceof Error ? error.message : "";
       const status = (
         {
@@ -75,6 +111,10 @@ export function apiRoute(fn: (request: Request) => Promise<Response>) {
           conversation_paused: 409,
           window_closed: 409,
           operation_in_progress: 409,
+          template_version_changed: 409,
+          template_version_limit: 409,
+          template_limit: 409,
+          image_staging_limit: 429,
         } as Record<string, number>
       )[message];
       return Response.json(
@@ -229,14 +269,22 @@ export function getAccountIntegration(id: string) {
     if (!uuid.safeParse(id).success) throw new ApiError(404, "not_found");
     const db = createServiceClient();
     const { data: account, error: accountError } = await db
-      .from("instagram_accounts").select("id")
-      .eq("id", id).eq("user_id", user).maybeSingle();
+      .from("instagram_accounts")
+      .select("id")
+      .eq("id", id)
+      .eq("user_id", user)
+      .maybeSingle();
     if (accountError) throw new Error("db_unavailable");
     if (!account) throw new ApiError(404, "not_found");
-    const { data, error } = await db.from("account_bot_bindings")
-      .select("account_id,integration_id,revision").eq("account_id", id).maybeSingle();
+    const { data, error } = await db
+      .from("account_bot_bindings")
+      .select("account_id,integration_id,revision")
+      .eq("account_id", id)
+      .maybeSingle();
     if (error) throw new Error("db_unavailable");
-    return respond(data ?? { account_id: id, integration_id: null, revision: 0 });
+    return respond(
+      data ?? { account_id: id, integration_id: null, revision: 0 },
+    );
   });
 }
 export function bindAccount(id: string, detach = false) {

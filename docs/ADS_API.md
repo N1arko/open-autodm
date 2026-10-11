@@ -33,9 +33,9 @@ All paths start with `/api/v1/ads/accounts`.
 | PATCH `/{id}`                  | `{"enabled":false}` or `true`; controls reads by this service                              |
 | PUT `/{id}/credentials`        | Verify and replace `{"access_token":"…"}`; preserves disabled state                        |
 | GET `/{id}/status`             | Verify live account and Insights access, with the short cache described below              |
-| GET `/{id}/campaigns`          | Campaign names, objectives, status and available budgets                                   |
-| GET `/{id}/adsets`             | Ad sets, campaign IDs, schedules, optimization and selected targeting fields               |
-| GET `/{id}/ads`                | Ads, campaign/ad-set IDs and available creative ID/name/title/body                         |
+| GET `/{id}/campaigns`          | Campaign names, objectives, status, budgets, bid strategy, spending cap and issues                                   |
+| GET `/{id}/adsets`             | Ad sets, geography/automation, destination, promoted object, bidding, learning and issues               |
+| GET `/{id}/ads`                | Ads, rich creative identity/CTA/media/templates/controls, review feedback and issues                         |
 | GET `/{id}/instagram-accounts` | Instagram advertising identities accessible through this ad account                        |
 | GET `/{id}/insights`           | Spend, impressions, reach, clicks, CTR/CPC/CPM/frequency and available actions/video plays |
 
@@ -87,6 +87,8 @@ Upstream operations have a 12-second timeout and a 1 MiB response limit. There a
 | 503  | `service_unavailable`                                                                 |
 
 Provider error messages, tokens and raw provider paging URLs are never returned. The core owner API has no endpoint for accepting arbitrary Marketing API calls. Advertising writes use the constrained preparation/execution contract, budget limits and audit trail in [ADS_MANAGEMENT_API.md](ADS_MANAGEMENT_API.md).
+
+Read rate limits include sanitized retry delay/scope/source and `Retry-After`; see [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md). Linked Page/Instagram resolution and full creative reads are also documented there.
 
 ## Official references
 

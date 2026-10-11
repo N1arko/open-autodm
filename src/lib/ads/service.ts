@@ -77,7 +77,7 @@ export async function read(
   refresh = false,
 ) {
   const access = token(a, p),
-    queryHash = hash(JSON.stringify({ kind, query }));
+    queryHash = hash(JSON.stringify({ contract: 2, kind, query }));
   const args = {
     p_user: a.user_id,
     p_account: a.id,

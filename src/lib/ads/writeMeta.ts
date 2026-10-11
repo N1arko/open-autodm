@@ -3,6 +3,8 @@ import { ApiError } from "@/lib/transport/api";
 import { metaId } from "./queries";
 import { actionEdge, paramsFor, type Action } from "./actions";
 import { isResource, resourcePath, type ResourceKind } from "./resourceActions";
+import { isRateLimit, retryAfter } from "./rateLimit";
+import { creativeRead, CREATIVE_FIELDS, providerJson } from "./readback";
 
 export class WriteMetaError extends ApiError {
   constructor(
@@ -10,6 +12,8 @@ export class WriteMetaError extends ApiError {
     public uncertain = false,
     public providerCode = 0,
     public providerSubcode = 0,
+    retry?: ReturnType<typeof retryAfter>,
+    scope: "read" | "validation" | "write_rejected" = "read",
   ) {
     super(
       code === "ads_permission_required"
@@ -21,6 +25,11 @@ export class WriteMetaError extends ApiError {
             : 502,
       code,
     );
+    if (retry) {
+      this.retryAfterSeconds = retry.seconds;
+      this.retrySource = retry.source;
+      this.retryScope = scope;
+    }
   }
 }
 const objectSchema = z.object({
@@ -40,6 +49,20 @@ const objectSchema = z.object({
   creative: z.object({ id: metaId }).optional(),
   objective: z.string().max(100).optional(),
   optimization_goal: z.string().max(100).optional(),
+  bid_strategy: z.string().max(100).optional(),
+  bid_amount: z
+    .union([
+      z.string().max(30).regex(/^\d+$/),
+      z.number().int().nonnegative().safe(),
+    ])
+    .transform(String)
+    .optional(),
+  billing_event: z.string().max(100).optional(),
+  destination_type: z.string().max(100).optional(),
+  promoted_object: z.record(z.unknown()).optional(),
+  bid_constraints: providerJson.optional(),
+  placement_soft_opt_out: providerJson.optional(),
+  attribution_spec: providerJson.optional(),
   object_type: z.string().max(100).optional(),
 });
 export type MetaObject = z.infer<typeof objectSchema>;
@@ -54,10 +77,13 @@ export function writeMeta(
     params: Record<string, unknown>,
     post = false,
     timeoutMs = 12000,
+    validation = false,
+    attempt = 0,
   ) {
     if (
       path !== "debug_token" &&
-      !/^(act_)?\d{1,30}(\/(campaigns|adsets|ads|adcreatives|advideos|adimages|promote_pages|instagram_accounts|adspixels|customaudiences|owned_product_catalogs|owned_ad_accounts|client_ad_accounts|products|product_sets|users))?$/.test(
+      path !== "search" &&
+      !/^(act_)?\d{1,30}(\/(campaigns|adsets|ads|adcreatives|advideos|adimages|promote_pages|instagram_accounts|adspixels|customaudiences|owned_product_catalogs|owned_ad_accounts|client_ad_accounts|products|product_sets|users|targetingsearch|media))?$/.test(
         path,
       )
     )
@@ -111,7 +137,7 @@ export function writeMeta(
       )
         throw new Error();
     } catch {
-      throw new WriteMetaError("meta_unavailable", post);
+      throw new WriteMetaError("meta_unavailable", post && !validation);
     }
     if (!r.ok || data.error) {
       const e = data.error as
@@ -119,20 +145,45 @@ export function writeMeta(
           | undefined,
         code = Number(e?.code ?? 0),
         sub = Number(e?.error_subcode ?? 0);
+      const limited = isRateLimit(r.status, code),
+        retry = limited ? retryAfter(r.headers) : undefined;
+      if (
+        (!post || validation) &&
+        retry &&
+        retry.seconds <= 1 &&
+        attempt === 0 &&
+        deadline - Date.now() > 2000
+      ) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, retry.seconds * 1000),
+        );
+        return call(
+          path,
+          token,
+          params,
+          post,
+          timeoutMs,
+          validation,
+          attempt + 1,
+        );
+      }
       throw new WriteMetaError(
-        r.status >= 500
-          ? "meta_unavailable"
-          : code === 190
-            ? "ads_token_unavailable"
-            : [10, 200, 294].includes(code) || r.status === 403
-              ? "ads_permission_required"
-              : [4, 17, 32, 613, 80000, 80004].includes(code) ||
-                  r.status === 429
-                ? "meta_rate_limited"
-                : "meta_rejected",
-        post && r.status >= 500,
+        limited
+          ? "meta_rate_limited"
+          : r.status >= 500
+            ? "meta_unavailable"
+            : code === 190
+              ? "ads_token_unavailable"
+              : [10, 200, 294].includes(code) || r.status === 403
+                ? "ads_permission_required"
+                : isRateLimit(r.status, code)
+                  ? "meta_rate_limited"
+                  : "meta_rejected",
+        post && !validation && r.status >= 500,
         code,
         sub,
+        retry,
+        validation ? "validation" : post ? "write_rejected" : "read",
       );
     }
     return data;
@@ -167,6 +218,132 @@ export function writeMeta(
     return p.data;
   };
   return {
+    async creative(account: string, creative: string, token: string) {
+      const parsed = creativeRead.safeParse(
+        await call(id(creative), token, { fields: CREATIVE_FIELDS }),
+      );
+      if (
+        !parsed.success ||
+        parsed.data.id !== creative ||
+        parsed.data.account_id !== account
+      )
+        throw new ApiError(404, "ads_object_not_found");
+      return parsed.data;
+    },
+    async pageInstagram(page: string, token: string) {
+      const parsed = z
+        .object({
+          id: metaId,
+          name: z.string().max(1000).optional(),
+          instagram_business_account: z
+            .object({ id: metaId, username: z.string().max(200).optional() })
+            .optional(),
+          connected_instagram_account: z
+            .object({ id: metaId, username: z.string().max(200).optional() })
+            .optional(),
+        })
+        .safeParse(
+          await call(id(page), token, {
+            fields:
+              "id,name,instagram_business_account{id,username},connected_instagram_account{id,username}",
+          }),
+        );
+      if (!parsed.success || parsed.data.id !== page)
+        throw new WriteMetaError("meta_invalid_response");
+      return parsed.data;
+    },
+    async instagram(
+      instagram: string,
+      token: string,
+      media = false,
+      after?: string,
+    ) {
+      if (!media) {
+        const parsed = z
+          .object({
+            id: metaId,
+            ig_id: z
+              .union([metaId, z.number().int().safe().positive()])
+              .transform(String)
+              .optional(),
+            username: z.string().max(200).optional(),
+            name: z.string().max(1000).optional(),
+            biography: z.string().max(3000).optional(),
+            media_count: z.number().int().nonnegative().optional(),
+            followers_count: z.number().int().nonnegative().optional(),
+          })
+          .safeParse(
+            await call(id(instagram), token, {
+              fields:
+                "id,ig_id,username,name,biography,media_count,followers_count",
+            }),
+          );
+        if (!parsed.success || parsed.data.id !== instagram)
+          throw new WriteMetaError("meta_invalid_response");
+        return parsed.data;
+      }
+      const data = await call(`${id(instagram)}/media`, token, {
+        fields: "id,caption,media_type,media_product_type,permalink,timestamp",
+        limit: "25",
+        ...(after ? { after } : {}),
+      });
+      const rows = z
+        .array(
+          z.object({
+            id: metaId,
+            caption: z.string().max(10000).optional(),
+            media_type: z.string().max(100).optional(),
+            media_product_type: z.string().max(100).optional(),
+            permalink: z.string().max(2048).optional(),
+            timestamp: z.string().max(100).optional(),
+          }),
+        )
+        .max(25)
+        .safeParse(data.data);
+      if (!rows.success) throw new WriteMetaError("meta_invalid_response");
+      return { data: rows.data, next_cursor: cursorFor(data) };
+    },
+    async targetingSearch(
+      account: string,
+      token: string,
+      query: Record<string, unknown>,
+      geo = false,
+    ) {
+      const data = await call(
+        geo ? "search" : `act_${id(account)}/targetingsearch`,
+        token,
+        query,
+      );
+      const rows = z.array(providerJson).max(50).safeParse(data.data);
+      if (!rows.success) throw new WriteMetaError("meta_invalid_response");
+      return { data: rows.data, next_cursor: cursorFor(data) };
+    },
+    async uploadImage(account: string, token: string, bytes: string) {
+      const data = await call(
+        `act_${id(account)}/adimages`,
+        token,
+        { bytes },
+        true,
+      );
+      const rows = z
+        .record(
+          z.object({
+            hash: z.string().regex(/^[a-f0-9]{32}$/i),
+            width: z.number().int().positive().optional(),
+            height: z.number().int().positive().optional(),
+            name: z.string().max(1000).optional(),
+          }),
+        )
+        .safeParse(data.images);
+      if (!rows.success || Object.keys(rows.data).length !== 1)
+        throw new WriteMetaError("meta_invalid_response", true);
+      return {
+        ...Object.values(rows.data)[0]!,
+        success: true,
+        state: "uploaded",
+        eligibility: "requires_creative_validation",
+      };
+    },
     async credential(token: string) {
       const data = await call("debug_token", token, { input_token: token });
       const schema = z.object({
@@ -184,9 +361,9 @@ export function writeMeta(
     async object(account: string, object: string, kind: string, token: string) {
       const fields =
         kind === "campaign"
-          ? "id,account_id,name,status,objective,daily_budget,lifetime_budget,updated_time"
+          ? "id,account_id,name,status,objective,daily_budget,lifetime_budget,bid_strategy,updated_time"
           : kind === "adset"
-            ? "id,account_id,name,status,campaign_id,optimization_goal,daily_budget,lifetime_budget,budget_remaining,start_time,end_time,targeting,updated_time"
+            ? "id,account_id,name,status,campaign_id,optimization_goal,billing_event,destination_type,promoted_object,bid_strategy,bid_amount,bid_constraints,placement_soft_opt_out,attribution_spec,daily_budget,lifetime_budget,budget_remaining,start_time,end_time,targeting,updated_time"
             : kind === "ad"
               ? "id,account_id,name,status,campaign_id,adset_id,creative{id},updated_time"
               : "id,account_id,name,object_type";
@@ -257,7 +434,7 @@ export function writeMeta(
       const data = await call(`act_${id(account)}/${edge}`, token, {
         fields:
           kind === "images"
-            ? "hash,name"
+            ? "hash,name,width,height,status"
             : kind === "videos"
               ? "id,title,status"
               : kind === "instagram"
@@ -271,6 +448,9 @@ export function writeMeta(
           ? z.object({
               hash: z.string().regex(/^[a-f0-9]{32}$/i),
               name: z.string().max(1000).optional(),
+              width: z.number().int().positive().optional(),
+              height: z.number().int().positive().optional(),
+              status: z.string().max(100).optional(),
             })
           : kind === "videos"
             ? z.object({
@@ -390,6 +570,8 @@ export function writeMeta(
       return { data: rows.data, next_cursor: cursorFor(data) };
     },
     async mutate(account: string, token: string, a: Action, validate = false) {
+      if (a.action === "image.upload")
+        throw new ApiError(400, "image_validation_unavailable");
       if (validate && isResource(a))
         throw new ApiError(400, "resource_validation_unavailable");
       if (validate && a.action === "video.upload")
@@ -410,6 +592,7 @@ export function writeMeta(
         // Instagram-post validation can take longer than ordinary Graph reads.
         // It creates no object; keep it bounded by the overall request deadline.
         validate ? 30000 : 12000,
+        validate,
       );
       if (validate) {
         if (data.success !== true)

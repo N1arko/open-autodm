@@ -12,6 +12,11 @@ All paths below start with `/api/v1/ads/accounts/{connection-UUID}`. Use the UUI
 | GET `/assets/instagram`                  | Instagram identities returned by Meta's ad-account discovery edge              |
 | GET `/assets/images`                     | Ad-account image hashes                                                       |
 | GET `/assets/videos`                     | Ad-account videos and processing state                                        |
+| POST `/assets/images/uploads`            | Stage a private local image before durable import                             |
+| GET `/targeting/search`                  | Search geography and targeting catalogs                                      |
+| GET `/creatives/{Meta-ID}`               | Read identity, CTA, media, enhancements and templates                          |
+| GET `/assets/pages/{Page-ID}/instagram`   | Resolve linked Instagram, including Direct legacy ID                          |
+| GET/POST `/chat-templates`               | Service-owned immutable versions of manual Direct templates                   |
 | POST `/actions`                          | Prepare a durable operation; requires `Idempotency-Key`                       |
 | POST `/actions/validate`                 | Send Meta `execution_options:["validate_only"]`, without executing the action |
 | GET `/actions`                           | Audit records, newest first; `cursor={UUID}` for further pages                |
@@ -82,22 +87,23 @@ Execution rechecks fresh Meta dependencies against the plan. Changed Meta object
 
 Repeated execution of a succeeded operation returns the same receipt without repeating the Meta POST. Concurrent execution returns `202` for the in-progress operation. Provider rejection produces `failed`; errors contain a stable service code and available numeric Meta code/subcode, never credentials or raw provider messages. Timeout, malformed response, server error or lost persistence acknowledgment produces an uncertain result. An abandoned `executing` record becomes `uncertain` when its status is fetched after two minutes.
 
-**Never automatically retry an uncertain write or recreate it under a new key.** Inspect Meta and the operation receipt first; an object may have been created or activated even though no acknowledgment arrived. This release provides no automatic reconciliation of an unknown provider outcome. It never retries provider writes. Failed, cancelled and uncertain operations cannot be executed again.
+**Never automatically retry an uncertain write or recreate it under a new key.** Inspect Meta and the operation receipt first; an object may have been created or activated even though no acknowledgment arrived. This release provides no automatic reconciliation of an unknown provider outcome. It never retries an actual provider write. Read/validation retry guidance, including the distinction between prepare and standalone validate, is in [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md). Failed, cancelled and uncertain operations cannot be executed again.
 
 ## Supported actions
 
-The JSON body always contains `action` and `params`; update actions also require top-level `object_id`. Unknown fields and arbitrary Graph paths are rejected. JSON request bodies are limited to 8 KiB. All creates of campaigns, ad sets and ads are forced to `PAUSED`. Activation is a separate update operation.
+The JSON body always contains `action` and `params`; update actions also require top-level `object_id`. Unknown fields and arbitrary Graph paths are rejected. Action JSON bodies are limited to 32 KiB, stored plans to 64 KiB. All creates of campaigns, ad sets and ads are forced to `PAUSED`. Activation is a separate update operation. [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md) defines local image imports, geography/search, Direct, templates, placement variants and creative controls.
 
-- `campaign.create`: `name`, one of the six `OUTCOME_…` objectives, explicit `special_ad_categories` (empty for ordinary ads), optional `special_ad_category_country`, optional `daily_budget` or `lifetime_budget`. Budget sharing defaults to false explicitly.
-- `campaign.update`: `object_id`; any of `name`, `status:ACTIVE|PAUSED`, `daily_budget`, `lifetime_budget`.
+- `campaign.create`: `name`, one of the six `OUTCOME_…` objectives, explicit `special_ad_categories` (empty for ordinary ads), optional `special_ad_category_country`, optional `daily_budget` or `lifetime_budget`, optional `bid_strategy`. CBO defaults explicitly to `LOWEST_COST_WITHOUT_CAP` when strategy is omitted. Budget sharing is explicitly false.
+- `campaign.update`: `object_id`; any of `name`, `status:ACTIVE|PAUSED`, `daily_budget`, `lifetime_budget`, `bid_strategy`. Scalar campaign `bid_amount` is not supported by the current Meta SDK; ad-set bid_amount remains available.
 - `adset.create`: `name`, `campaign_id`, `optimization_goal`, `billing_event`, `targeting`; optional budget, `start_time`, `end_time`, `bid_strategy`, `bid_amount`, `promoted_object`, `destination_type`, `dsa_beneficiary`, `dsa_payor`. Use ISO timestamps with offsets. A CBO campaign supplies the budget; otherwise supply an ad-set budget.
 - `adset.update`: `object_id`; the same editable ad-set parameters, plus `status`; the campaign cannot be reassigned.
 - `creative.create`: `name` and one of the creative definitions below.
 - `ad.create`: `name`, `adset_id`, `creative_id`.
 - `ad.update`: `object_id`; any of `name`, `status`, `creative_id`.
 - `video.upload`: `name`, public HTTPS `file_url`. The service asks Meta to import this video into the connected ad account. Its returned ID may still be processing. Poll `/assets/videos` and require `video_status:ready` before using it in a creative. Meta validation-only is unavailable for video import.
+- `image.upload`: `upload_id` from private multipart staging; uses the same durable contract. It returns an account image hash; validation-only is unavailable for import.
 
-Targeting supports country geography, ages 18–65, genders, platform/placement selection, `device_platforms`, `user_os`, `user_device`, `flexible_spec` interests/behaviors/work positions, custom and excluded audience IDs, locales and an explicit Advantage audience switch. Device/OS names and detailed targeting IDs must come from Meta's current targeting catalog; an unknown category can be rejected by Meta. All referenced objects and creative assets are checked against the selected advertising account. Meta still determines which objective, optimization, targeting, placement, special category and identity combinations are permitted. Pixel, audience, commerce catalog/product/set creation and background optimization are documented in [ADS_AUTOMATION_API.md](ADS_AUTOMATION_API.md). Lead forms, business asset assignments and policy exemptions remain outside this release.
+Targeting supports countries, regions, cities, custom coordinates, excluded geography, location types, ages 18–65, genders, platform/placement selection, `device_platforms`, `user_os`, `user_device`, `flexible_spec` interests/behaviors/work positions, custom and excluded audience IDs, locales and explicit Advantage audience/geography switches. Ad sets also accept typed `placement_soft_opt_out` placement lists. Device/OS names and detailed targeting IDs must come from Meta's current targeting catalog; an unknown category can be rejected by Meta. All referenced objects and creative assets are checked against the selected advertising account. Meta still determines which objective, optimization, targeting, placement, special category and identity combinations are permitted. Pixel, audience, commerce catalog/product/set creation and background optimization are documented in [ADS_AUTOMATION_API.md](ADS_AUTOMATION_API.md). Lead forms, business asset assignments and policy exemptions remain outside this release.
 
 Example ad set in a campaign using ad-set budgets:
 
@@ -123,6 +129,8 @@ Example ad set in a campaign using ad-set budgets:
 ```
 
 ### Creatives
+
+Direct, carousel, manual templates, feature flags, media sourcing and asset-feed definitions are documented in [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md). For new layouts/creative controls, preparation and execution also require exact Meta validation.
 
 Choose the `creative.kind` explicitly:
 
