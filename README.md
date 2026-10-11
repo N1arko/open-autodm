@@ -4,14 +4,14 @@
 
 # open-autoDM
 
-**Open-source, self-hosted Instagram comment-to-DM automation.**
+**Open-source, self-hosted Instagram messaging, Reel publishing, Insights and Meta advertising.**
 
-Someone comments a keyword on your post → they instantly get your link in their DMs.
-The exact engine behind ManyChat-style "comment *LINK* to get it" funnels - except it's
-free, it runs on **your** infrastructure, through **your own** Meta app, and your data
-never touches anyone else's servers.
+Connect external bots, publish scheduled Reels, read account and advertising metrics,
+and manage campaigns through an owner HTTP API. The service also includes the original
+keyword and comment-to-DM automation. Meta supplies the official platform APIs;
+external bots own their LLM calls and conversation history.
 
-`Next.js (one deployment)` · `Supabase (DB + auth + queue + cron)` · `Vercel or Cloudflare`
+`Next.js app` · `Persistent worker` · `Supabase (DB + auth + queues)`
 
 **⭐ Star this repo now** - it takes 2 seconds, helps other creators find a free alternative to
 $25/month tools, and new features land here regularly. **Watch** the repo to catch them.
@@ -23,6 +23,25 @@ $25/month tools, and new features land here regularly. **Watch** the repo to cat
 </div>
 
 ---
+
+## Работа с этим форком
+
+Этот репозиторий `N1arko/open-autodm` содержит один сервис: Instagram Direct с внешними ботами, публикацию Reels, Instagram Insights и управление рекламой Meta. Для управления через ИИ-агента есть HTTP API владельца. Next.js приложение и постоянный worker используют общий Supabase.
+
+**Новому чату:** начните с [AGENTS.md](AGENTS.md) и [карты проекта](docs/PROJECT_GUIDE.md). Локальное расположение доступа задаётся в исключённом из Git `.local/AGENT_ACCESS.md`. Состав подключённых аккаунтов, разрешения и состояние заданий проверяются через API.
+
+| Возможность | Документация |
+| --- | --- |
+| Управление без входа в панель | [API владельца](docs/AGENT_API.md) |
+| Любые внешние обработчики Direct | [API ботов](docs/BOT_API.md) |
+| Reels, расписание и обложки | [Публикации](docs/PUBLISHING_API.md) |
+| Статистика Instagram и наблюдения | [Insights](docs/INSIGHTS_API.md) |
+| Рекламные кабинеты и отчёты | [Чтение рекламы](docs/ADS_API.md) |
+| Кампании, объявления, бюджеты и targeting | [Управление рекламой](docs/ADS_MANAGEMENT_API.md) |
+| Пиксели, аудитории, каталоги, фоновые правила и проверка токенов | [Рекламные ресурсы](docs/ADS_AUTOMATION_API.md) |
+| Приложение, worker, окружение и миграции | [Развёртывание](docs/DEPLOYMENT.md) |
+
+Разделы ниже описывают исходные automation и варианты установки community-проекта. Для модулей этого форка используйте контракты выше; для VPS — инструкцию развёртывания. Логику LLM, prompts и историю диалогов задаёт внешний бот.
 
 ## ✨ What it does
 
@@ -63,7 +82,7 @@ approved in days). The in-app Setup Wizard walks you through both stages.
 
 ## 🏗️ Architecture
 
-One Next.js app. No Redis, no worker servers, no message broker.
+The fork runs a Next.js app and a persistent worker against Supabase. Its background cycles handle bot transport, Reel publishing, Instagram Insights, advertising rules and the original automation engine. The diagram below shows the original comment-to-DM flow; see [the project guide](docs/PROJECT_GUIDE.md) for the full service.
 
 ```
 Instagram comment
@@ -85,32 +104,30 @@ Meta webhook ──► /api/webhook ── verify HMAC ── 200 OK to Meta (< 
 ```
 
 - **Supabase** is the entire backend: Postgres (data + job queue + rate limiter), Auth, Storage (card images), and pg_cron (background ticks).
-- **Deploys identically** to Vercel (zero config) and Cloudflare Workers (via OpenNext).
+- **Hosting:** the original comment automation supports Vercel and Cloudflare (via OpenNext). The full fork's background modules use the persistent worker described in [DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## 🚀 Quick start
 
-You need: a free [Supabase](https://supabase.com) account, a free [Vercel](https://vercel.com) or [Cloudflare](https://cloudflare.com) account, and a free [Meta developer](https://developers.facebook.com) account. Full walkthrough: **[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)**.
+The full fork uses Supabase, a Meta developer app and a host for the Next.js app plus persistent worker. Follow **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the full installation. **[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)** covers the original community deployment options.
 
 ```bash
 # 1. Clone + install
-git clone https://github.com/YOUR_USERNAME/open-autodm && cd open-autodm
-npm install
+git clone https://github.com/N1arko/open-autodm && cd open-autodm
+npm ci
 
-# 2. Create a Supabase project, then apply the schema
-npm i -g supabase
-supabase login
-supabase link --project-ref YOUR_PROJECT_REF
-supabase db push
+# 2. Configure the environment for the selected Supabase project
+cp .env.example .env.local
+# Fill in the variables described in the file and DEPLOYMENT.md
 
-# 3. Configure env
-cp .env.example .env
-#    → fill in the 6 values (each one is explained in the file)
+# 3. Apply migrations to the configured database
+npm run migrate
 
-# 4. Deploy
-npx vercel            # …or: npm run cf:deploy  (Cloudflare)
+# 4. Start the local app; run the worker in a separate terminal
+npm run dev
+# npm run worker
 
-# 5. Create your login in Supabase (Authentication → Users → Add user),
-#    then open your deployment → sign in → follow the in-app Setup Wizard
+# 5. Configure Meta and the owner API using AGENT_API.md,
+#    or use the existing Setup Wizard in the web panel
 ```
 
 **No register page, on purpose.** Access is invite-only: accounts exist only when the instance
@@ -129,12 +146,12 @@ and a troubleshooting table for every failure mode we've ever hit).
 
 ## 🔐 Security model
 
-- The only secrets in your deployment env: Supabase keys, one encryption key, one cron secret.
+- Deployment env holds Supabase credentials, encryption/cron secrets and optional owner API authentication settings; see `.env.example`.
 - Meta App ID/Secret are entered in the UI and stored **AES-256-GCM encrypted** in your own DB.
 - Instagram OAuth tokens: encrypted at rest, decrypted only at send time, never logged.
 - Webhooks: HMAC-verified (timing-safe compare) before any processing.
 - OAuth: CSRF-protected with signed, 10-minute state JWTs.
-- Every API route authenticates the Supabase JWT; ownership is checked in SQL on every query.
+- Owner routes accept allowed Supabase sessions or the configured owner management credential; bot reply routes accept account-scoped integration credentials. Ownership is checked by the module's API and SQL rules. Meta webhooks use signature verification.
 - Row Level Security on every table, service-role isolation for engine tables.
 
 ## 🤝 Contributing
@@ -179,7 +196,3 @@ See [LICENSE](LICENSE).
 Built with ❤️ by <a href="https://www.instagram.com/buildwharsha/"><b>@buildwharsha</b></a> - say hi on Instagram
 
 </div>
-
-## External bot transport (fork)
-
-This fork adds an account-scoped webhook and reply API for external bots. See [API contract](docs/BOT_API.md), [headless agent management](docs/AGENT_API.md) and [VPS deployment](docs/DEPLOYMENT.md). Bot logic and LLM calls run in your own backend. The existing Instagram connection and automation UI remains available.

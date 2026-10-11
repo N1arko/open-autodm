@@ -15,6 +15,9 @@ next-env.d.ts
 .env.local
 .env*.local
 
+# machine-specific agent access pointers
+.local/
+
 # misc
 .DS_Store
 *.tsbuildinfo
