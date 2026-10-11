@@ -1,10 +1,10 @@
 # Паритет рекламы: Ads Manager, Meta API и Open-autoDM
 
-Аудит 11 октября 2026, по запуску moorselin и текущему коду ветки `codex/ads-api-parity`. Это датированный результат; при новых задачах сверяйте контракт, текущую версию сервиса и свежие ответы Meta. Общая инструкция — [PROJECT_GUIDE.md](PROJECT_GUIDE.md), новые поля — [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md).
+Аудит 11 октября 2026, по запуску moorselin и реализации в commit `9e724c9`. Это датированный результат; при новых задачах сверяйте контракт, текущую версию сервиса и свежие ответы Meta. Общая инструкция — [PROJECT_GUIDE.md](PROJECT_GUIDE.md), новые поля — [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md).
 
 Основание: официальный [Meta SDK v26.0.2][sdk] на commit `efd8423a2e595ea8d4c04eb824ce113f2f1d68cd` от 17 сентября 2026; Graph v26.0; scoped GET к выбранному кабинету и `validate_only` к adcreatives. Страницы developers.facebook.com во время проверки возвращали 429/timeout; SDK служит источником схемы. Записи чата запуска используются как сведения об UI. Наличие поля в SDK, успешная validation и реальная доставка — отдельные уровни подтверждения.
 
-Актуальную кампанию `120254181403080057`, группу `120254181495980057` и три работающих ads аудит не изменял. Все POST при живой проверке содержали `execution_options:["validate_only"]`. Новые реальные объекты/расход этим аудитом не создавались. Изменения кода и новая миграция подготовлены локально; выпуск отдельный.
+Актуальную кампанию `120254181403080057`, группу `120254181495980057` и три работающих ads аудит не изменял. Все POST к Meta при живой проверке содержали `execution_options:["validate_only"]`. Новые реальные объекты/расход этим аудитом не создавались. После аудита доработка выпущена на `autodm.niar42.com` 11 октября 2026; подтверждения выпуска — ниже и в [DEPLOYMENT.md](DEPLOYMENT.md).
 
 | Пункт / кабинет | Официальный API | Наш API после доработки | Подтверждение | Действие / граница |
 | --- | --- | --- | --- | --- |
@@ -40,6 +40,14 @@
 Тесты проверяют private staging и owner isolation, expiry, durable replay/uncertain, SQL права, immutable template versions/concurrency, exact Direct identities/destination, foreign placement media rejection, rich owned creative proof, scoped search/cursor/rate continuation. 11 октября 2026 прошли `npm test` (30), `npm run test:integration` (81), `npm run typecheck` и `npm run build`. После обновления зависимостей повторены проверки; `npm audit` вернул 0 найденных уязвимостей. Это результат для локального набора изменений, сохранённого в Git; выпуск на сервер проверяется отдельно.
 
 Реальные ads этим аудитом не изменяются. Новая миграция применяется перед обновлением app и worker; см. [DEPLOYMENT.md](DEPLOYMENT.md). Неподдерживаемые комбинации/поля заканчиваются ошибкой. Автоматический повтор запроса с удалёнными creative controls не допускается.
+
+## Подтверждение выпуска 11 октября 2026
+
+Runtime commit `41e236c` выпущен на `https://autodm.niar42.com`; app и worker используют один image. Миграция `20261011000001_ads_creative_assets.sql` применена с совпадающей контрольной суммой; новые таблицы имеют RLS и закрыты для `anon`/`authenticated`.
+
+23 проверки публичного API подтвердили health, авторизацию, свежие списки кампаний/ad sets/ads, full creative readback, Page → Instagram и captions, поиск города/профессии, создание/версионирование/архивирование шаблона, multipart staging изображения и durable prepare его импорта. Direct-креатив с ручным приветствием, индивидуальными `OPT_OUT` и multi-advertiser `OPT_OUT` прошёл Meta validation через сервис. Проверочные template/staging/неисполненный plan удалены после проверки. Настоящий image upload в Meta, создание creative, фактическое оформление и доставка остаются уровнями проверки из таблицы выше.
+
+Настроенные статусы всех объектов в обоих подключённых рекламных кабинетах совпали с состоянием до выпуска. Метаданные установленной версии находятся на сервере в `/opt/open-autodm/.release.json`; при дальнейших задачах проверяйте эту запись и фактический API.
 
 [sdk]: https://github.com/facebook/facebook-python-business-sdk/tree/efd8423a2e595ea8d4c04eb824ce113f2f1d68cd
 [account]: https://github.com/facebook/facebook-python-business-sdk/blob/efd8423a2e595ea8d4c04eb824ce113f2f1d68cd/facebook_business/adobjects/adaccount.py
