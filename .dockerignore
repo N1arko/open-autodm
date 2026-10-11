@@ -3,6 +3,7 @@ node_modules
 .next
 .open-next
 .wrangler
+.local
 .env*
 !.env.example
 *.tsbuildinfo
