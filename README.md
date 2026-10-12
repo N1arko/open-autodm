@@ -37,6 +37,7 @@ $25/month tools, and new features land here regularly. **Watch** the repo to cat
 | Reels, расписание и обложки | [Публикации](docs/PUBLISHING_API.md) |
 | Статистика Instagram и наблюдения | [Insights](docs/INSIGHTS_API.md) |
 | Рекламные кабинеты и отчёты | [Чтение рекламы](docs/ADS_API.md) |
+| Рекламные подписки, посещения профиля, стоимость и дневная динамика | [Результаты рекламы](docs/ADS_REPORTING_API.md) |
 | Кампании, объявления, бюджеты и targeting | [Управление рекламой](docs/ADS_MANAGEMENT_API.md) |
 | География/search, локальные картинки, Direct-шаблоны, carousel и настройки creative | [Рекламные материалы](docs/ADS_CREATIVE_API.md) |
 | Пиксели, аудитории, каталоги, фоновые правила и проверка токенов | [Рекламные ресурсы](docs/ADS_AUTOMATION_API.md) |

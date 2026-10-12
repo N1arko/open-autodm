@@ -5,6 +5,7 @@ import { ApiError, hash } from "@/lib/transport/api";
 import { transportStore, type TransportStore } from "@/lib/transport/store";
 import { adsMeta, type AdsMeta, type AdsMetadata } from "./meta";
 import { insightQuery, type Collection } from "./queries";
+import { reporting } from "./report";
 
 export interface AdsPorts {
   meta: AdsMeta;
@@ -77,7 +78,7 @@ export async function read(
   refresh = false,
 ) {
   const access = token(a, p),
-    queryHash = hash(JSON.stringify({ contract: 2, kind, query }));
+    queryHash = hash(JSON.stringify({ contract: 3, kind, query }));
   const args = {
     p_user: a.user_id,
     p_account: a.id,
@@ -98,6 +99,10 @@ export async function read(
       : kind === "insights"
         ? await p.meta.insights(a.ad_account_id, access, query)
         : await p.meta.list(a.ad_account_id, access, kind, query);
+  const report =
+    kind === "insights"
+      ? reporting(query, a.metadata.timezone_name, new Date().toISOString())
+      : undefined;
   const payload = {
     account_id: a.id,
     ad_account_id: a.ad_account_id,
@@ -108,7 +113,31 @@ export async function read(
     kind,
     query,
     ...data,
+    ...(report && "data" in data
+      ? {
+          reporting: report,
+          data: data.data.map((row) => ({
+            ...row,
+            report: {
+              ...(row.report as Record<string, unknown>),
+              currency: a.metadata.currency,
+              period: {
+                from: row.date_start,
+                to_inclusive: row.date_stop,
+                includes_partial_current_day:
+                  String(row.date_start) <= report.current_account_day &&
+                  report.current_account_day <= String(row.date_stop),
+              },
+            },
+          })),
+        }
+      : {}),
   };
+  if (
+    kind === "insights" &&
+    Buffer.byteLength(JSON.stringify(payload), "utf8") > 1048576
+  )
+    throw new ApiError(413, "ads_report_too_large");
   const saved = await p.store.rpc<boolean>("ads_save", {
     ...args,
     p_payload: payload,

@@ -3,6 +3,11 @@ import { ApiError } from "@/lib/transport/api";
 import { metaId, type Collection } from "./queries";
 import { isRateLimit, retryAfter } from "./rateLimit";
 import { creativeRead, CREATIVE_FIELDS, providerJson } from "./readback";
+import {
+  extendedInsightFields,
+  instagramInsightFields,
+  rowReport,
+} from "./report";
 
 const text = z.string().max(1000);
 const numeric = z.union([
@@ -100,14 +105,17 @@ const schemas = {
 };
 const actions = z
   .array(
-    z.object({
-      action_type: text,
-      value: numeric.optional(),
-      "1d_click": numeric.optional(),
-      "7d_click": numeric.optional(),
-      "1d_view": numeric.optional(),
-      "7d_view": numeric.optional(),
-    }),
+    z
+      .object({
+        action_type: text,
+        value: numeric.optional(),
+        "1d_click": numeric.optional(),
+        "7d_click": numeric.optional(),
+        "1d_view": numeric.optional(),
+        "7d_view": numeric.optional(),
+      })
+      .passthrough()
+      .transform((v) => providerJson.parse(v) as typeof v),
   )
   .max(500);
 const insightSchema = z.object({
@@ -133,6 +141,23 @@ const insightSchema = z.object({
   actions: actions.optional(),
   action_values: actions.optional(),
   video_play_actions: actions.optional(),
+  instagram_profile_follow: numeric.nullable().optional(),
+  instagram_profile_visits: numeric.nullable().optional(),
+  inline_link_clicks: numeric.optional(),
+  inline_link_click_ctr: numeric.optional(),
+  cost_per_inline_link_click: numeric.optional(),
+  outbound_clicks: actions.optional(),
+  outbound_clicks_ctr: actions.optional(),
+  cost_per_outbound_click: actions.optional(),
+  cost_per_action_type: actions.optional(),
+  unique_actions: actions.optional(),
+  attribution_setting: text.optional(),
+  video_thruplay_watched_actions: actions.optional(),
+  video_p25_watched_actions: actions.optional(),
+  video_p50_watched_actions: actions.optional(),
+  video_p75_watched_actions: actions.optional(),
+  video_p100_watched_actions: actions.optional(),
+  video_avg_time_watched_actions: actions.optional(),
   country: text.optional(),
   age: text.optional(),
   gender: text.optional(),
@@ -150,6 +175,7 @@ const fields: Record<Collection, string> = {
 const INSIGHT_FIELDS =
   "account_id,account_name,account_currency,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,date_start,date_stop,spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions,action_values,video_play_actions";
 export class AdsMetaError extends ApiError {
+  invalidInsightField?: string;
   constructor(
     code: string,
     public providerCode = 0,
@@ -175,6 +201,9 @@ export class AdsMetaError extends ApiError {
 export interface AdsPage {
   data: Record<string, unknown>[];
   next_cursor: string | null;
+  requested_fields?: string[];
+  unsupported_fields?: string[];
+  provider_fields?: string[];
 }
 export interface AdsMeta {
   profile(id: string, token: string): Promise<AdsMetadata>;
@@ -201,7 +230,9 @@ export function adsMeta(
     token: string,
     params: Record<string, string>,
     attempt = 0,
+    deadline = Date.now() + 12000,
   ) {
+    if (Date.now() >= deadline) throw new AdsMetaError("meta_unavailable");
     if (!metaId.safeParse(id).success)
       throw new ApiError(400, "invalid_ad_account_id");
     let res: Response, data: Record<string, unknown>;
@@ -212,7 +243,7 @@ export function adsMeta(
           method: "GET",
           headers: { Authorization: `Bearer ${token}` },
           redirect: "manual",
-          signal: AbortSignal.timeout(12000),
+          signal: AbortSignal.timeout(Math.min(12000, deadline - Date.now())),
         },
       );
       const reader = res.body?.getReader();
@@ -240,7 +271,7 @@ export function adsMeta(
       throw new AdsMetaError("meta_unavailable");
     }
     if (!res.ok || data.error) {
-      const err = data.error as { code?: number } | undefined,
+      const err = data.error as { code?: number; message?: string } | undefined,
         code = Number.isInteger(err?.code) ? err!.code! : 0;
       const limited = isRateLimit(res.status, code),
         retry = limited ? retryAfter(res.headers) : undefined;
@@ -248,9 +279,9 @@ export function adsMeta(
         await new Promise((resolve) =>
           setTimeout(resolve, retry.seconds * 1000),
         );
-        return call(id, edge, token, params, attempt + 1);
+        return call(id, edge, token, params, attempt + 1, deadline);
       }
-      throw new AdsMetaError(
+      const error = new AdsMetaError(
         limited
           ? "meta_rate_limited"
           : res.status >= 500
@@ -265,6 +296,19 @@ export function adsMeta(
         code,
         retry,
       );
+      if (
+        edge === "insights" &&
+        res.status === 400 &&
+        code === 100 &&
+        typeof err?.message === "string"
+      ) {
+        error.invalidInsightField = instagramInsightFields.find((field) =>
+          new RegExp(
+            `['\"]?${field}['\"]? is not valid for fields param\\b`,
+          ).test(err.message!),
+        );
+      }
+      throw error;
     }
     return data;
   }
@@ -337,11 +381,52 @@ export function adsMeta(
       );
     },
     async insights(id, token, query) {
-      return page(
-        await call(id, "insights", token, { ...query, fields: INSIGHT_FIELDS }),
-        insightSchema,
-        id,
-      );
+      const requested = [
+        ...INSIGHT_FIELDS.split(","),
+        ...extendedInsightFields,
+      ];
+      const unsupported: string[] = [],
+        deadline = Date.now() + 30000;
+      for (;;) {
+        try {
+          const result = page(
+            await call(
+              id,
+              "insights",
+              token,
+              {
+                ...query,
+                fields: requested
+                  .filter((f) => !unsupported.includes(f))
+                  .join(","),
+              },
+              0,
+              deadline,
+            ),
+            insightSchema,
+            id,
+          );
+          return {
+            ...result,
+            data: result.data.map((row) => ({
+              ...row,
+              report: rowReport(row, unsupported),
+            })),
+            requested_fields: requested,
+            unsupported_fields: unsupported,
+            provider_fields: requested.filter((f) => !unsupported.includes(f)),
+          };
+        } catch (e) {
+          if (
+            !(e instanceof AdsMetaError) ||
+            !e.invalidInsightField ||
+            unsupported.includes(e.invalidInsightField) ||
+            unsupported.length >= instagramInsightFields.length
+          )
+            throw e;
+          unsupported.push(e.invalidInsightField);
+        }
+      }
     },
   };
 }

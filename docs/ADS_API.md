@@ -37,7 +37,7 @@ All paths start with `/api/v1/ads/accounts`.
 | GET `/{id}/adsets`             | Ad sets, geography/automation, destination, promoted object, bidding, learning and issues               |
 | GET `/{id}/ads`                | Ads, rich creative identity/CTA/media/templates/controls, review feedback and issues                         |
 | GET `/{id}/instagram-accounts` | Instagram advertising identities accessible through this ad account                        |
-| GET `/{id}/insights`           | Spend, impressions, reach, clicks, CTR/CPC/CPM/frequency and available actions/video plays |
+| GET `/{id}/insights`           | Base metrics, Instagram follows/visits, actions/video/costs and result availability |
 
 `enabled:false` blocks subsequent provider reads and writes; it does not pause ads in Meta. Failed token replacement preserves the existing connection. It can still be inspected while disabled. Metadata on GET `/{id}` is from the last token verification; use `status?refresh=true` to inspect current Meta metadata. Connection deletion is not implemented. `capabilities.manage` reflects the service management switch; Meta must also authorize the token, and budget limits govern spend-related operations.
 
@@ -63,7 +63,9 @@ GET /api/v1/ads/accounts/{internal-UUID}/insights?from=2026-10-04&to=2026-10-07&
 | `daily`     | `false` (whole window, default), `true` (daily rows)                                                    |
 | `breakdown` | `none` (default), `country`, `age,gender`, `publisher_platform`, `publisher_platform,platform_position` |
 
-Reports explicitly use `action_report_time=impression` and `use_unified_attribution_setting=true` (ad-set attribution settings). When comparing Ads Manager, align dates, timezone, level, attribution/reporting mode and breakdowns. The response exposes the exact provider query. Some metric/breakdown combinations may be unavailable; Meta rejections stay explicit errors.
+Default reports use `action_report_time=impression` and `use_unified_attribution_setting=true` (ad-set attribution settings). When comparing Ads Manager, align dates, timezone, level, attribution/reporting mode and breakdowns. The response exposes the exact provider query. Some metric/breakdown combinations may be unavailable; Meta rejections stay explicit errors.
+
+The default report time remains `impression`; explicit `conversion`/`mixed` are also supported. One optional numeric `campaign_id`, `adset_id` or `ad_id` applies a fixed entity filter. Added raw fields, `data[].report`, `reporting`, `requested_fields`, `provider_fields` and `unsupported_fields` are documented in [ADS_REPORTING_API.md](ADS_REPORTING_API.md). Zero, omitted metrics, explicitly invalid fields and unavailable calculations/mappings stay distinct. Existing fields and pagination remain compatible; the cache contract is versioned.
 
 Meta numeric/money strings remain strings, avoiding precision loss. Insights `spend`/CPC/CPM use major currency units (e.g. BRL `"10.50"`); account `amount_spent`/`spend_cap` and campaign/ad-set budget fields retain Meta's minor-unit representation (e.g. `"500"` for BRL R$5.00). Do not apply a universal divide-by-100 rule to all currencies. An account `spend_cap` of zero represents no configured cap, not a zero remaining budget.
 
@@ -73,13 +75,14 @@ An omitted metric stays omitted; empty reports remain `data:[]`. Actual `"0"` re
 
 Read responses are cached for up to five minutes per connection, revision and exact query/page. `refresh=true` requests fresh data. A failed refresh returns an error and preserves earlier cache; a separate normal GET can still return that cache with `cached:true` and its original `fetched_at`. Token replacement, reconnection and enable/disable invalidate cache. In-flight reads cannot save or return success after the connection's revision changes. Each account retains at most 100 cached query/pages; cache entries older than one day are pruned on the next save. There is no daily history collector in this release.
 
-Upstream operations have a 12-second timeout and a 1 MiB response limit. There are no automatic provider retries. On rate errors, retry with backoff; on repeated slow/large reports, use smaller windows/pages. A large multi-account export should schedule bounded requests.
+Upstream operations have a 12-second per-attempt timeout and a 1 MiB response limit. Reports have a 30-second deadline for precise Instagram-field compatibility fallback; fields come from one successful page. One short read rate retry is bounded by that deadline. On longer rate errors, retry with backoff; on slow/large reports, use smaller windows/pages. Schedule bounded requests for multi-account exports.
 
 | HTTP | Error                                                                                 |
 | ---- | ------------------------------------------------------------------------------------- |
 | 401  | `unauthorized`                                                                        |
 | 404  | `not_found` (including another owner's connection)                                    |
 | 400  | Invalid body/query/date/pagination                                                    |
+| 413  | `ads_report_too_large`; use fewer rows or a smaller window                             |
 | 403  | `ads_permission_required`                                                             |
 | 409  | `ads_token_unavailable`, `ads_connection_disabled`, `ads_connection_changed`          |
 | 429  | `meta_rate_limited`                                                                   |

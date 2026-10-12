@@ -7,6 +7,7 @@ import { decrypt } from "../src/lib/crypto";
 import { hash } from "../src/lib/transport/api";
 import { adsMeta } from "../src/lib/ads/meta";
 import { type AdsPorts, account, read } from "../src/lib/ads/service";
+import { insightQuery } from "../src/lib/ads/queries";
 import {
   connectAdsAccount,
   listAdsAccounts,
@@ -142,6 +143,34 @@ before(async () => {
       cursors: { after: "opaque+next=" },
     };
     if (mode === "empty") return json(response, { data: [] });
+    if (edge === "insights" && mode === "insights_large_report")
+      return json(response, {
+        data: Array.from({ length: 2 }, () => ({
+          account_id: metaId,
+          date_start: "2026-10-04",
+          date_stop: "2026-10-06",
+          actions: Array.from({ length: 350 }, (_, i) => ({
+            action_type: "onsite_conversion.messaging_" + "x".repeat(960) + i,
+            value: "1",
+          })),
+        })),
+      });
+    if (
+      edge === "insights" &&
+      mode === "insights_invalid_field" &&
+      u.searchParams.get("fields")?.includes("instagram_profile_follow")
+    )
+      return json(
+        response,
+        {
+          error: {
+            code: 100,
+            message:
+              "instagram_profile_follow is not valid for fields param. secret",
+          },
+        },
+        400,
+      );
     if (edge === "insights")
       return json(response, {
         data: [
@@ -151,6 +180,11 @@ before(async () => {
             date_stop: "2026-10-06",
             spend: "10.50",
             impressions: "0",
+            ...(u.searchParams
+              .get("fields")
+              ?.includes("instagram_profile_follow")
+              ? { instagram_profile_follow: "0" }
+              : {}),
             actions: [],
             access_token: "strip",
           },
@@ -358,6 +392,101 @@ test("invalid reports, unknown parameters and duplicate params never trigger ups
   ])
     assert.equal((await getAdsInsights(id, ports)(req(q))).status, 400);
   assert.equal(calls.length, 0);
+});
+test("extended owner reports expose requested fields, exact missingness, filters and costs while invalidating the legacy cache", async () => {
+  const id = await connected(),
+    p = ports(),
+    a = await account(user, id, p);
+  const params = new URLSearchParams(
+    "from=2026-10-04&to=2026-10-07&level=campaign&campaign_id=120001&action_report_time=mixed",
+  );
+  const q = insightQuery(params, a.metadata.timezone_name);
+  await p.store.rpc("ads_save", {
+    p_user: user,
+    p_account: id,
+    p_revision: a.revision,
+    p_hash: hash(JSON.stringify({ contract: 2, kind: "insights", query: q })),
+    p_payload: { data: [{ legacy: true }] },
+  });
+  calls = [];
+  const response = await getAdsInsights(id, ports)(req(params.toString()));
+  assert.equal(response.status, 200);
+  const out = await response.json();
+  assert.equal(out.cached, false);
+  assert.equal(out.data[0].legacy, undefined);
+  assert.equal(out.data[0].report.metrics.instagram_follows.value, "0");
+  assert.equal(
+    out.data[0].report.metrics.instagram_follows.status,
+    "available",
+  );
+  assert.equal(
+    out.data[0].report.metrics.instagram_profile_visits.status,
+    "not_returned",
+  );
+  assert.equal(
+    out.data[0].report.cost_per_result.instagram_follows.reason,
+    "zero_denominator",
+  );
+  assert.equal(out.reporting.action_report_time, "mixed");
+  assert.equal(out.reporting.to_exclusive, "2026-10-07");
+  assert.equal(out.reporting.reach_is_additive, false);
+  assert.ok(out.requested_fields.includes("instagram_profile_visits"));
+  assert.deepEqual(JSON.parse(calls[0]!.searchParams.get("filtering")!), [
+    { field: "campaign.id", operator: "IN", value: ["120001"] },
+  ]);
+  const cached = await (
+    await getAdsInsights(id, ports)(req(params.toString()))
+  ).json();
+  assert.equal(cached.cached, true);
+  assert.deepEqual(cached.data, out.data);
+  assert.ok(
+    Math.abs(Date.parse(cached.fetched_at) - Date.parse(out.fetched_at)) < 1000,
+  );
+  assert.deepEqual(cached.reporting, out.reporting);
+  assert.equal(calls.length, 1);
+  assert.equal(
+    (await getAdsInsights(id, ports)(req(params.toString(), "other-token")))
+      .status,
+    404,
+  );
+});
+test("provider field rejection is explicit in the cached owner report; an authenticated fresh read can recover", async () => {
+  const id = await connected();
+  mode = "insights_invalid_field";
+  calls = [];
+  const query = "from=2026-10-04&to=2026-10-07&level=ad";
+  const out = await (await getAdsInsights(id, ports)(req(query))).json();
+  assert.deepEqual(out.unsupported_fields, ["instagram_profile_follow"]);
+  assert.equal(
+    out.data[0].report.metrics.instagram_follows.status,
+    "unsupported",
+  );
+  assert.equal(calls.length, 2);
+  mode = "ok";
+  const cached = await (await getAdsInsights(id, ports)(req(query))).json();
+  assert.equal(cached.cached, true);
+  assert.deepEqual(cached.unsupported_fields, out.unsupported_fields);
+  const fresh = await (
+    await getAdsInsights(id, ports)(req(query + "&refresh=true"))
+  ).json();
+  assert.equal(fresh.cached, false);
+  assert.deepEqual(fresh.unsupported_fields, []);
+  assert.equal(
+    fresh.data[0].report.metrics.instagram_follows.status,
+    "available",
+  );
+});
+test("an oversized normalized report fails explicitly and preserves the prior cached snapshot", async () => {
+  const id = await connected(),
+    query = "from=2026-10-04&to=2026-10-07";
+  const baseline = await (await getAdsInsights(id, ports)(req(query))).json();
+  mode = "insights_large_report";
+  const large = await getAdsInsights(id, ports)(req(query + "&refresh=true"));
+  assert.equal(large.status, 413);
+  assert.equal((await large.json()).error, "ads_report_too_large");
+  const cached = await (await getAdsInsights(id, ports)(req(query))).json();
+  assert.equal(cached.cached, true);
+  assert.deepEqual(cached.data, baseline.data);
 });
 test("Meta permission, expiry, rate and server failures stay explicit and preserve prior cache", async () => {
   const id = await connected();

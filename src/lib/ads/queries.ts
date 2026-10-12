@@ -79,6 +79,10 @@ export function insightQuery(
     "limit",
     "after",
     "refresh",
+    "action_report_time",
+    "campaign_id",
+    "adset_id",
+    "ad_id",
   ]);
   const today = date(localDay(timezone, now));
   const from = params.get("from") ?? day(today - 7 * DAY),
@@ -107,13 +111,34 @@ export function insightQuery(
     ].includes(breakdown)
   )
     throw new ApiError(400, "invalid_insights_query");
+  const reportTime = params.get("action_report_time") ?? "impression";
+  const filters = ["campaign_id", "adset_id", "ad_id"].filter((k) =>
+    params.has(k),
+  );
+  if (
+    !["impression", "conversion", "mixed"].includes(reportTime) ||
+    filters.length > 1 ||
+    filters.some((k) => !metaId.safeParse(params.get(k)).success)
+  )
+    throw new ApiError(400, "invalid_insights_query");
   return {
     ...pagination(params),
     level,
     time_range: JSON.stringify({ since: from, until: day(end - DAY) }),
     time_increment: daily === "true" ? "1" : "all_days",
-    action_report_time: "impression",
+    action_report_time: reportTime,
     use_unified_attribution_setting: "true",
+    ...(filters.length
+      ? {
+          filtering: JSON.stringify([
+            {
+              field: filters[0]!.replace("_id", ".id"),
+              operator: "IN",
+              value: [params.get(filters[0]!)!],
+            },
+          ]),
+        }
+      : {}),
     ...(breakdown !== "none" ? { breakdowns: breakdown } : {}),
   };
 }
