@@ -1,6 +1,6 @@
 # Результаты рекламы для агента
 
-Расширение существующего `GET /api/v1/ads/accounts/{connection-UUID}/insights` сохраняет прежние поля и добавляет Instagram results, стоимости и состояния доступности. Авторизация и даты — в [ADS_API.md](ADS_API.md). Код подготовлен к выпуску; действующую установку проверяйте по её ответу и серверному `.release.json`.
+Расширение существующего `GET /api/v1/ads/accounts/{connection-UUID}/insights` сохраняет прежние поля и добавляет Instagram results, стоимости и состояния доступности. Авторизация и даты — в [ADS_API.md](ADS_API.md). Расширение выпущено 12 октября 2026; действующую установку проверяйте по её ответу и серверному `.release.json`.
 
 ## Запрос и динамика
 
@@ -76,8 +76,10 @@ SDK описывает `actions` как AdsActionStats со строковым `
 
 Fresh Graph v26.0 GET за 11–12 октября, `America/Sao_Paulo`: campaign spend `36.38`, impressions 5247, reach 3374, all clicks 93, follows 13, profile visits 65, link clicks 27. Проверены ad/campaign/adset, daily rows, account aggregate и фиксированные filters/report time. В последующей account-level выборке follows вернулись, profile visits были пропущены: `not_returned` на этом уровне. Campaign/adset возвращали посещения. Более ранний UI snapshot имел 61 посещение; текущий день и момент чтения различались.
 
-Messaging codes в свежих ответах отсутствовали; ноль и их UI mapping не подтверждены. Meta objects, бюджеты, targeting, статусы и профильные подключения этим аудитом не изменялись. Серверный API проверен в существующей части; расширение проверяется локально до отдельного выпуска.
+Messaging codes в свежих ответах отсутствовали; ноль и их UI mapping не подтверждены. Meta objects, бюджеты, targeting, статусы и профильные подключения этим аудитом не изменялись.
 
-Собранный локальный owner API дополнительно проверен на действующих Meta/Supabase данных на всех четырёх уровнях и с daily rows. Снимок campaign в `2026-10-12T19:13:40Z`: spend `37.12`, impressions 5373, reach 3447, clicks all 96, follows 13, visits 65, link clicks 29, derived cost/follow `2.855385` BRL. Дневная строка 11 октября отмечена полной, строка 12 октября — частичной. Общая проверка: 36 unit + 84 integration теста, typecheck, production build, npm audit (0 уязвимостей). Миграции и новые env для расширения не нужны; перед выпуском обновите app и worker до общего image по [DEPLOYMENT.md](DEPLOYMENT.md).
+Собранный локальный owner API дополнительно проверен на действующих Meta/Supabase данных на всех четырёх уровнях и с daily rows. Снимок campaign в `2026-10-12T19:13:40Z`: spend `37.12`, impressions 5373, reach 3447, clicks all 96, follows 13, visits 65, link clicks 29, derived cost/follow `2.855385` BRL. Дневная строка 11 октября отмечена полной, строка 12 октября — частичной. Общая проверка: 36 unit + 84 integration теста, typecheck, production build, npm audit (0 уязвимостей). Миграции и новые env для расширения не нужны; app и worker обновляются до общего image по [DEPLOYMENT.md](DEPLOYMENT.md).
+
+После выпуска runtime commit `b32629e` на `https://autodm.niar42.com` прошла 21 read-only проверка публичного API: четыре уровня Insights, daily, conversion report time, кеш, пагинация и отказы некорректным/неавторизованным запросам. Снимок campaign в `2026-10-12T19:33:59Z`: spend `37.87` BRL, follows 13, visits 67, link clicks 29, cost/follow `2.913077` BRL. Отсутствующие messaging events сохранили `not_returned`. Статусы, бюджеты, targeting и creative IDs в обоих рекламных кабинетах совпали со снимком до выпуска. Подробности выпуска и отката — в [DEPLOYMENT.md](DEPLOYMENT.md).
 
 Схема: [Meta AdsInsights SDK v26.0.2](https://github.com/facebook/facebook-python-business-sdk/blob/efd8423a2e595ea8d4c04eb824ce113f2f1d68cd/facebook_business/adobjects/adsinsights.py), [AdsActionStats](https://github.com/facebook/facebook-python-business-sdk/blob/efd8423a2e595ea8d4c04eb824ce113f2f1d68cd/facebook_business/adobjects/adsactionstats.py), [параметры AdAccount Insights](https://github.com/facebook/facebook-python-business-sdk/blob/efd8423a2e595ea8d4c04eb824ce113f2f1d68cd/facebook_business/adobjects/adaccount.py). При следующих версиях сверяйте SDK и живые ответы.
