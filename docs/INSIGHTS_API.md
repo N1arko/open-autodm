@@ -59,6 +59,8 @@ Account dates are UTC calendar dates: `from` inclusive, `to` exclusive. Default 
 
 Validated `values` and `total_value.breakdowns` are preserved. `unavailable_metrics` reports `no_data` or `provider_rejected`; missing data never becomes zero. Genuine numeric zero stays zero. Auth `401`, foreign account/media `404`, unavailable/expired/paused account `409`, missing Insights permission `403`, rate limit `429`, provider failure `502`, database failure `503`. Provider text/tokens are not returned/logged by this module. Graph reads use a fixed host, Bearer headers, no redirects, deadlines and bounded bodies.
 
+When available, errors include positive numeric `provider_code`/`provider_subcode` independently of retry metadata. Missing/invalid codes are omitted. This module does not return provider diagnostic text.
+
 History filters: `kind=account|media|audience`, `media_id`, `from`, `to`, `cursor`. Dates filter **observation days**, not measurement windows. Default includes today and the preceding six days. Rows contain `id,kind,target_id,query,payload,collected_on,fetched_at`. Pagination is by UUID; sort by observation time for charts. Choose the latest observation of the same query/window rather than adding repeated measurements.
 
 Media counts are lifetime totals; differences give change between observations. Compare average watch times directly. Daily unique reach cannot be summed into weekly unique reach: request the complete weekly window. Paid/organic coverage differs by metric; consult [account metrics](https://developers.facebook.com/documentation/instagram-platform/api-reference/instagram-user/insights) and [media metrics](https://developers.facebook.com/documentation/instagram-platform/reference/instagram-media/insights).

@@ -7,7 +7,15 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { resolveEndpoint } from "./http";
 import { transportStore, type TransportMessage } from "./store";
 
+export interface ProviderDetails {
+  message?: string;
+  user_title?: string;
+  user_message?: string;
+}
 export class ApiError extends Error {
+  providerCode?: number;
+  providerSubcode?: number;
+  providerDetails?: ProviderDetails;
   retryAfterSeconds?: number;
   retryScope?: "read" | "validation" | "write_rejected";
   retrySource?: "retry_after" | "business_usage" | "default";
@@ -73,6 +81,7 @@ export function apiRoute(fn: (request: Request) => Promise<Response>) {
         return Response.json(
           {
             error: error.message,
+            ...providerErrorFields(error),
             ...(retry
               ? {
                   retry_after_seconds: error.retryAfterSeconds,
@@ -81,14 +90,6 @@ export function apiRoute(fn: (request: Request) => Promise<Response>) {
                   retryable:
                     error.retryScope === "read" ||
                     error.retryScope === "validation",
-                  ...("providerCode" in error &&
-                  Number.isInteger(error.providerCode)
-                    ? { provider_code: error.providerCode }
-                    : {}),
-                  ...("providerSubcode" in error &&
-                  Number.isInteger(error.providerSubcode)
-                    ? { provider_subcode: error.providerSubcode }
-                    : {}),
                 }
               : {}),
           },
@@ -122,6 +123,21 @@ export function apiRoute(fn: (request: Request) => Promise<Response>) {
         { status: status ?? 503, headers: { "Cache-Control": "no-store" } },
       );
     }
+  };
+}
+export function providerErrorFields(error: ApiError) {
+  return {
+    ...(Number.isSafeInteger(error.providerCode) &&
+    (error.providerCode ?? 0) > 0
+      ? { provider_code: error.providerCode }
+      : {}),
+    ...(Number.isSafeInteger(error.providerSubcode) &&
+    (error.providerSubcode ?? 0) > 0
+      ? { provider_subcode: error.providerSubcode }
+      : {}),
+    ...(error.providerDetails
+      ? { provider_details: error.providerDetails }
+      : {}),
   };
 }
 export const respond = (body: unknown, status = 200) =>

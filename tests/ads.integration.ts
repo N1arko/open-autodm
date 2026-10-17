@@ -267,7 +267,10 @@ test("import fails closed for missing Insights permission, wrong identity and ba
   mode = "insights_permission";
   const denied = await connect();
   assert.equal(denied.status, 403);
-  assert.deepEqual(await denied.json(), { error: "ads_permission_required" });
+  assert.deepEqual(await denied.json(), {
+    error: "ads_permission_required",
+    provider_code: 200,
+  });
   mode = "wrong_account";
   assert.equal((await connect()).status, 502);
   mode = "ok";
@@ -506,7 +509,11 @@ test("Meta permission, expiry, rate and server failures stay explicit and preser
       assert.equal(r.headers.get("Retry-After"), "60");
       assert.equal(payload.retry_scope, "read");
       assert.equal(payload.retryable, true);
-    } else assert.deepEqual(payload, { error });
+    } else
+      assert.deepEqual(payload, {
+        error,
+        provider_code: { permission: 200, expired: 190, server: 2 }[state],
+      });
   }
   mode = "ok";
   assert.equal(

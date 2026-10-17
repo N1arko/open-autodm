@@ -172,7 +172,9 @@ before(async () => {
         owner: {
           id: u.pathname.endsWith("/99899")
             ? "999"
-            : scopedOwner ? apiScopedIg : ig,
+            : scopedOwner
+              ? apiScopedIg
+              : ig,
         },
         media_type: u.pathname.endsWith("99002") ? "IMAGE" : "VIDEO",
         timestamp: new Date().toISOString(),
@@ -271,9 +273,11 @@ test("media ownership is proven before insights; supported values survive missin
 });
 test("owner API reads API-scoped media owners but rejects tokens for another Instagram account", async () => {
   mode = "api_scoped_owner";
-  const r = await getMediaInsights(account, "99001", ports)(
-    req("?metrics=views"),
-  );
+  const r = await getMediaInsights(
+    account,
+    "99001",
+    ports,
+  )(req("?metrics=views"));
   assert.equal(r.status, 200);
   assert.equal((await r.json()).media.id, "99001");
   assert.equal((await snapshotRows()).rows.length, 1);
@@ -436,7 +440,10 @@ test("provider permission/rate failures are explicit and back off without poison
   assert.equal((await snapshotRows()).rows.length, 1);
   const r = await getAccountInsights(account, ports)(req("?refresh=true"));
   assert.equal(r.status, 403);
-  assert.deepEqual(await r.json(), { error: "insights_permission_required" });
+  assert.deepEqual(await r.json(), {
+    error: "insights_permission_required",
+    provider_code: 200,
+  });
   mode = "rate";
   assert.equal(
     (await getAccountInsights(account, ports)(req("?refresh=true"))).status,

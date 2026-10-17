@@ -13,6 +13,7 @@ Open-autoDM объединяет Direct, публикацию Reels, Instagram I
 | Подключить рекламный кабинет, читать кампании, расходы и результаты | [ADS_API.md](ADS_API.md) | `src/lib/ads/service.ts`, `src/lib/ads/queries.ts`, `src/lib/ads/meta.ts` |
 | Получить рекламные подписки/посещения профиля, стоимость результата и дневную динамику | [ADS_REPORTING_API.md](ADS_REPORTING_API.md) | `src/lib/ads/report.ts`, `src/lib/ads/meta.ts`, `src/lib/ads/queries.ts` |
 | Создать/остановить рекламу, изменить бюджет, аудиторию или creative | [ADS_MANAGEMENT_API.md](ADS_MANAGEMENT_API.md) | `src/lib/ads/manage.ts`, `src/lib/ads/actions.ts`, `src/lib/ads/writeMeta.ts` |
+| Проверить рекламу на посещения профиля Instagram и причины Meta validation отказов | [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md#посещения-профиля-instagram) | `src/lib/ads/manage.ts`, `src/lib/ads/actions.ts`, `src/lib/ads/diagnostics.ts` |
 | Найти город/интерес, загрузить локальную картинку, выбрать Direct-шаблон и варианты для размещений | [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md) | `src/lib/ads/creative.ts`, `src/lib/ads/discovery.ts`, `src/lib/ads/uploads.ts`, `src/lib/ads/templates.ts` |
 | Работать с пикселями, аудиториями, commerce-каталогами и правилами оптимизации | [ADS_AUTOMATION_API.md](ADS_AUTOMATION_API.md) | `src/lib/ads/resourceActions.ts`, `src/lib/ads/optimization.ts`, `src/lib/ads/credentials.ts` |
 | Запустить сервис, применить миграции, проверить выпуск | [DEPLOYMENT.md](DEPLOYMENT.md) | `Dockerfile`, `compose.yaml`, `compose.production.yaml`, `scripts/worker.ts`, `scripts/migrate.ts` |

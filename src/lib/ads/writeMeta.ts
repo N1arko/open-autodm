@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ApiError } from "@/lib/transport/api";
+import { ApiError, type ProviderDetails } from "@/lib/transport/api";
+import { providerDetails } from "./diagnostics";
 import { metaId } from "./queries";
 import { actionEdge, paramsFor, type Action } from "./actions";
 import { isResource, resourcePath, type ResourceKind } from "./resourceActions";
@@ -14,6 +15,7 @@ export class WriteMetaError extends ApiError {
     public providerSubcode = 0,
     retry?: ReturnType<typeof retryAfter>,
     scope: "read" | "validation" | "write_rejected" = "read",
+    details?: ProviderDetails,
   ) {
     super(
       code === "ads_permission_required"
@@ -25,6 +27,7 @@ export class WriteMetaError extends ApiError {
             : 502,
       code,
     );
+    this.providerDetails = details;
     if (retry) {
       this.retryAfterSeconds = retry.seconds;
       this.retrySource = retry.source;
@@ -184,6 +187,7 @@ export function writeMeta(
         sub,
         retry,
         validation ? "validation" : post ? "write_rejected" : "read",
+        validation ? providerDetails(data.error, token) : undefined,
       );
     }
     return data;
@@ -218,6 +222,30 @@ export function writeMeta(
     return p.data;
   };
   return {
+    async validateCreativeForAdset(
+      account: string,
+      token: string,
+      action: Extract<Action, { action: "creative.create" }>,
+      adsetId: string,
+    ) {
+      const data = await call(
+        `act_${id(account)}/ads`,
+        token,
+        {
+          name: action.params.name,
+          adset_id: id(adsetId),
+          status: "PAUSED",
+          creative: paramsFor(action),
+          execution_options: ["validate_only"],
+        },
+        true,
+        30000,
+        true,
+      );
+      if (data.success !== true)
+        throw new WriteMetaError("meta_invalid_validation_response");
+      return { validated: true };
+    },
     async creative(account: string, creative: string, token: string) {
       const parsed = creativeRead.safeParse(
         await call(id(creative), token, { fields: CREATIVE_FIELDS }),

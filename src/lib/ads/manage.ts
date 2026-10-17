@@ -6,6 +6,7 @@ import {
   jsonBody,
   owner,
   respond,
+  providerErrorFields,
 } from "@/lib/transport/api";
 import { resolveEndpoint, publicAddress } from "@/lib/transport/http";
 import {
@@ -71,6 +72,11 @@ export interface Plan {
   requires_spend_confirmation: boolean;
   budget: { daily_budget_minor: string; lifetime_budget_minor: string } | null;
   meta_validated: boolean;
+  validation?: {
+    scope: "creative_only" | "creative_and_adset" | "action";
+    adset_id?: string;
+    adset_compatibility: "validated" | "not_checked";
+  };
 }
 export interface Operation {
   id: string;
@@ -148,6 +154,7 @@ async function plan(
     };
   }
   let validateInstagramCreative = false;
+  let creativeAdsetId: string | undefined;
   let effectiveAction = action;
   const object = async (id: string, kind: string) => {
     const v = await p.writer.object(a.ad_account_id, id, kind, access);
@@ -216,6 +223,58 @@ async function plan(
   }
   if (action.action === "creative.create") {
     const c = action.params.creative;
+    creativeAdsetId = action.params.validation_adset_id;
+    if (creativeAdsetId) {
+      const group = await object(creativeAdsetId, "adset");
+      if (!group.campaign_id) throw new WriteMetaError("meta_invalid_response");
+      const parent = await object(group.campaign_id, "campaign");
+      if (
+        group.destination_type === "INSTAGRAM_PROFILE" ||
+        ("call_to_action" in c && c.call_to_action === "VIEW_INSTAGRAM_PROFILE")
+      ) {
+        if (
+          parent.objective !== "OUTCOME_TRAFFIC" ||
+          group.destination_type !== "INSTAGRAM_PROFILE" ||
+          group.optimization_goal !== "PROFILE_VISIT" ||
+          group.billing_event !== "IMPRESSIONS" ||
+          (c.kind !== "image" && c.kind !== "video") ||
+          c.call_to_action !== "VIEW_INSTAGRAM_PROFILE" ||
+          !c.instagram_user_id ||
+          !c.link ||
+          group.promoted_object?.page_id !== c.page_id
+        )
+          throw new ApiError(409, "profile_creative_configuration_mismatch");
+        const linked = await p.writer.pageInstagram(c.page_id, access);
+        if (
+          ![
+            linked.instagram_business_account?.id,
+            linked.connected_instagram_account?.id,
+          ].includes(c.instagram_user_id)
+        )
+          throw new ApiError(409, "page_instagram_identity_mismatch");
+        const profile = await p.writer.instagram(c.instagram_user_id, access);
+        const destination = new URL(c.link);
+        if (
+          !("username" in profile) ||
+          !profile.username ||
+          !["instagram.com", "www.instagram.com"].includes(
+            destination.hostname.toLowerCase(),
+          ) ||
+          destination.search ||
+          destination.hash ||
+          destination.port ||
+          destination.pathname.replace(/\/$/, "").toLowerCase() !==
+            "/" + profile.username.toLowerCase()
+        )
+          throw new ApiError(409, "instagram_profile_destination_mismatch");
+        deps[`page_link:${c.page_id}`] = linked;
+        deps[`instagram_profile:${c.instagram_user_id}`] = {
+          id: profile.id,
+          username: profile.username,
+        };
+      }
+      validateInstagramCreative = true;
+    }
     if (c.kind === "instagram_direct") {
       const group = await object(c.adset_id, "adset");
       if (!group.campaign_id) throw new WriteMetaError("meta_invalid_response");
@@ -415,9 +474,21 @@ async function plan(
     !target.end_time
   )
     throw new ApiError(400, "lifetime_budget_requires_end_time");
-  const metaValidated = validate || validateInstagramCreative;
+  const profileAd =
+    !!adset &&
+    adset.destination_type === "INSTAGRAM_PROFILE" &&
+    (action.action === "ad.create" ||
+      (action.action === "ad.update" && !!action.params.creative_id));
+  const metaValidated = validate || validateInstagramCreative || profileAd;
   if (metaValidated)
     await p.writer.mutate(a.ad_account_id, access, effectiveAction, true);
+  if (creativeAdsetId && effectiveAction.action === "creative.create")
+    await p.writer.validateCreativeForAdset(
+      a.ad_account_id,
+      access,
+      effectiveAction,
+      creativeAdsetId,
+    );
   return {
     action,
     ...(effectiveAction !== action
@@ -428,6 +499,19 @@ async function plan(
     requires_spend_confirmation: risk,
     budget,
     meta_validated: metaValidated,
+    validation: {
+      scope:
+        action.action === "creative.create"
+          ? creativeAdsetId
+            ? "creative_and_adset"
+            : "creative_only"
+          : "action",
+      ...(creativeAdsetId ? { adset_id: creativeAdsetId } : {}),
+      adset_compatibility:
+        creativeAdsetId || (metaValidated && adset && entity === "ad")
+          ? "validated"
+          : "not_checked",
+    },
   };
 }
 export const getManagement = (id: string, ports = defaultManagePorts) =>
@@ -653,7 +737,11 @@ export async function executeManaged(
             retryable: true,
           }
         : {};
-    const result = await finish("cancelled", { error: code, ...retry });
+    const result = await finish("cancelled", {
+      error: code,
+      ...(e instanceof ApiError ? providerErrorFields(e) : {}),
+      ...retry,
+    });
     return Response.json(result, {
       status: e instanceof ApiError ? e.status : 503,
       headers: {
@@ -695,8 +783,7 @@ export async function executeManaged(
         error: code,
         ...(e instanceof WriteMetaError
           ? {
-              provider_code: e.providerCode,
-              provider_subcode: e.providerSubcode,
+              ...providerErrorFields(e),
               ...(e.retryAfterSeconds
                 ? {
                     retry_after_seconds: e.retryAfterSeconds,

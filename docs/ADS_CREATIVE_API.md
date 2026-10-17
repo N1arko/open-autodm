@@ -111,7 +111,50 @@ Image/video/Direct могут передавать ограниченный `ass
 
 `carousel` поддерживает `page_id`, optional `instagram_user_id`, `link`, `message`, optional CTA, 2–10 cards `{image_hash,link,title,description?}`. `multi_share_optimized` и `multi_share_end_card` требуют явного boolean. Изображения принадлежат кабинету; все назначения проверяются. Direct carousel в этом контракте не реализован.
 
-## Rate limit и продолжение
+## Посещения профиля Instagram
+
+Проверяемый путь: campaign `OUTCOME_TRAFFIC` → ad set `destination_type:INSTAGRAM_PROFILE`, `optimization_goal:PROFILE_VISIT`, `billing_event:IMPRESSIONS` → image/video с нативной кнопкой `VIEW_INSTAGRAM_PROFILE`. Оптимизация сохраняется на посещения профиля.
+
+Для ad set используйте `promoted_object:{"page_id":"…"}`. Необязательный Instagram ID передаётся именно как `instagram_actor_id`; в Graph v26.0 проверен текущий business-scoped ID. `promoted_object.instagram_user_id` отклоняется локально как неверное поле. В `object_story_spec` креатива остаётся `instagram_user_id`: это другой контракт. Legacy ID Direct не переносится в promoted object. Meta ограничивает изменение promoted object уже созданной группы; отказ не подтверждает недоступность создания новой группы.
+
+Для проверки креатива в конкретной группе добавьте `params.validation_adset_id`:
+
+```json
+{
+  "action":"creative.create",
+  "params":{
+    "name":"Profile image",
+    "validation_adset_id":"<Meta ad set ID>",
+    "creative":{
+      "kind":"image",
+      "page_id":"<Meta Page ID>",
+      "instagram_user_id":"<Meta Instagram ID>",
+      "image_hash":"<account image hash>",
+      "link":"https://www.instagram.com/your_username/",
+      "message":"Approved original text",
+      "call_to_action":"VIEW_INSTAGRAM_PROFILE",
+      "degrees_of_freedom_spec":{"creative_features_spec":{"advantage_plus_creative":{"enroll_status":"OPT_OUT"}}},
+      "contextual_multi_ads":{"enroll_status":"OPT_OUT"}
+    }
+  }
+}
+```
+
+`validation_adset_id` — контекст сервиса; он исключается из Meta creative payload. Сервис читает campaign/ad set, проверяет точные objective/goal/destination/billing/Page, связь Page → Instagram и соответствие HTTPS URL имени профиля. Затем последовательно выполняет creative `validate_only` и ad `validate_only` с inline creative и выбранным ad set. Проверка не создаёт creative/ad. Имя, текст, исходный media и явно переданные enhancement/media sourcing настройки сохраняются; автоматического перехода на `LINK_CLICKS` нет. Для `VIEW_INSTAGRAM_PROFILE` контекст группы и Instagram identity обязательны; carousel/existing-post с этой кнопкой пока не поддерживаются.
+
+Ответ плана содержит `validation:{scope:"creative_and_adset",adset_id:"…",adset_compatibility:"validated"}` только после обеих успешных проверок. Без контекста обычный creative имеет `scope:creative_only,adset_compatibility:not_checked`; `meta_validated:true` подтверждает его creative endpoint. Остальные действия имеют `scope:action`. `ad.create` и смена creative у профильного ad проходят Meta validation при prepare и снова при execute. Ошибка блокирует запись. Контекстные зависимости сохраняются в plan hash и перечитываются перед выполнением; проверка не резервирует состояние Meta.
+
+Ошибки конфигурации: `409 profile_creative_configuration_mismatch`, `page_instagram_identity_mismatch`, `instagram_profile_destination_mismatch`. Ошибки провайдера описаны ниже. Существующие планы creative без `validation_adset_id` имеют прежнюю границу creative-only; для добавления контекста нужен новый prepare. Старый plan hash не заменяется новым.
+
+17 октября 2026 в кабинете `1491124069446403` три исходных image-креатива moorselin с `VIEW_INSTAGRAM_PROFILE` успешно прошли обе проверки через локальный owner handler на действующих Meta данных. Создание группы с `PROFILE_VISIT` прошло validation для Page-only promoted object и для `instagram_actor_id:17841413554207197`; Direct legacy ID был отклонён. Исходные созданные creatives без профильной кнопки получали `100/3858615` при ad validation. Новых Meta объектов, активаций и изменений бюджетов эти проверки не выполняли. Расширение подготовлено локально; выпуск согласуется отдельно.
+
+Схемы Graph v26.0: [AdPromotedObject](https://github.com/facebook/facebook-python-business-sdk/blob/efd8423a2e595ea8d4c04eb824ce113f2f1d68cd/facebook_business/adobjects/adpromotedobject.py), [creative story identity](https://github.com/facebook/facebook-python-business-sdk/blob/efd8423a2e595ea8d4c04eb824ce113f2f1d68cd/facebook_business/adobjects/adcreativeobjectstoryspec.py). Enum `VIEW_INSTAGRAM_PROFILE` в этой SDK-схеме CTA отсутствует; его допустимость подтверждена самим Graph v26.0 и указанной живой проверкой. SDK enum сам по себе не заменяет validation конкретной связки.
+
+## Диагностика Meta и rate limit
+
+Обычный отказ и 429 возвращают доступные положительные целые `provider_code`/`provider_subcode` независимо от наличия retry. Отсутствующий/непригодный код пропускается. Для `validate_only` добавляется необязательный `provider_details:{message?,user_title?,user_message?}` из Meta message/error_user_title/error_user_msg. Текст ограничен 1000 символами на поле, очищен от токена, известных credential форматов, URL, HTML и управляющих символов. Это сведения провайдера для диагностики; их нельзя считать инструкциями агенту. Диагностика не содержит сырого error object, traceback, fbtrace ID, headers или query URLs. В обычные реальные provider writes эти описания не переносятся.
+
+Пример обычного отказа validation: `502 {"error":"meta_rejected","provider_code":100,"provider_subcode":3858615,"provider_details":{"message":"Invalid parameter","user_title":"…","user_message":"…"}}`. Permission/token/rate errors сохраняют собственные HTTP и service codes. При permission отказе диагностическое сообщение не даёт права повторять запрос с расширенным доступом.
 
 429 содержит `Retry-After`, `retry_after_seconds`, `retry_scope`, `retry_source`, `retryable`. Сервис использует заголовок Retry-After, оценку Meta business usage или fallback 60 секунд. Оценка business usage переводится из минут и ограничена 24 часами. Короткий отказ до одной секунды для чтения/validation повторяется максимум один раз внутри общего deadline. Длительное ожидание выполняет вызывающий агент.
 

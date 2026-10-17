@@ -42,6 +42,7 @@ let posts: { path: string; params: Record<string, string> }[],
   mode: string,
   readPaths: string[],
   pageVisible: boolean,
+  campaignObjective: string,
   group: Record<string, unknown>;
 const ports = (): ManagePorts => ({
   store: db.store,
@@ -133,6 +134,23 @@ before(async () => {
       posts.push({ path, params });
       if (mode === "uncertain") return json(res, { error: { code: 2 } }, 500);
       if (mode === "malformed") return json(res, { unexpected: true });
+      if (mode === "profile-ad-rejected" && path.endsWith("/ads"))
+        return json(
+          res,
+          {
+            error: {
+              code: 100,
+              error_subcode: 3858615,
+              message: "Invalid parameter",
+              error_user_title: "Invalid CTA",
+              error_user_msg:
+                "Incompatible profile CTA " +
+                access +
+                " https://meta.test/?access_token=private-secret",
+            },
+          },
+          400,
+        );
       if (mode === "rate-validation") {
         res.setHeader("Retry-After", "120");
         return json(res, { error: { code: 4 } }, 429);
@@ -154,7 +172,7 @@ before(async () => {
         account_id: "123",
         name: "campaign",
         status: "PAUSED",
-        objective: "OUTCOME_ENGAGEMENT",
+        objective: campaignObjective,
         daily_budget: "3000",
       });
     if (path === "200") return json(res, group);
@@ -244,6 +262,7 @@ beforeEach(async () => {
   readPaths = [];
   mode = "ok";
   pageVisible = true;
+  campaignObjective = "OUTCOME_ENGAGEMENT";
   group = {
     id: "200",
     account_id: "123",
@@ -497,17 +516,21 @@ test("Direct preparation proves exact Page/Instagram/deeplink/adset configuratio
   );
   assert.equal(
     (
-      await saveTemplate(connection, template.id, ports)(
-        req({ name: "Portuguese", expected_version: 100, body: welcome }),
-      )
+      await saveTemplate(
+        connection,
+        template.id,
+        ports,
+      )(req({ name: "Portuguese", expected_version: 100, body: welcome }))
     ).status,
     409,
   );
   assert.equal(
     (
-      await archiveTemplate(connection, template.id, ports)(
-        req({ expected_version: 100 }),
-      )
+      await archiveTemplate(
+        connection,
+        template.id,
+        ports,
+      )(req({ expected_version: 100 }))
     ).status,
     200,
   );
@@ -760,4 +783,160 @@ test("new image and template tables/RPCs are inaccessible to public SQL roles", 
     /permission denied/,
   );
   await db.pool.query("RESET ROLE");
+});
+
+const profileCreative = () => ({
+  action: "creative.create",
+  params: {
+    name: "Profile fixture",
+    validation_adset_id: "200",
+    creative: {
+      kind: "image",
+      page_id: "700",
+      instagram_user_id: "900",
+      image_hash: hash,
+      link: "https://www.instagram.com/fixture/",
+      message: "texto original ⟡",
+      call_to_action: "VIEW_INSTAGRAM_PROFILE",
+      degrees_of_freedom_spec: {
+        creative_features_spec: {
+          image_touchups: { enroll_status: "OPT_OUT" },
+        },
+      },
+      contextual_multi_ads: { enroll_status: "OPT_OUT" },
+    },
+  },
+});
+function profileGroup() {
+  campaignObjective = "OUTCOME_TRAFFIC";
+  group = {
+    ...group,
+    destination_type: "INSTAGRAM_PROFILE",
+    optimization_goal: "PROFILE_VISIT",
+  };
+}
+
+test("profile creative validates both edges and preserves exact text, image and enhancement policy", async () => {
+  profileGroup();
+  const input = profileCreative();
+  const r = await validateAction(connection, ports)(req(input));
+  assert.equal(r.status, 200, JSON.stringify(await r.clone().json()));
+  const plan = await r.json();
+  assert.deepEqual(plan.validation, {
+    scope: "creative_and_adset",
+    adset_id: "200",
+    adset_compatibility: "validated",
+  });
+  assert.equal(plan.meta_validated, true);
+  assert.deepEqual(
+    posts.map((p) => p.path),
+    ["act_123/adcreatives", "act_123/ads"],
+  );
+  assert(
+    posts.every((p) => p.params.execution_options === '["validate_only"]'),
+  );
+  const inline = JSON.parse(posts[1]!.params.creative!);
+  assert.equal(posts[1]!.params.status, "PAUSED");
+  assert.equal(posts[1]!.params.adset_id, "200");
+  assert.equal(
+    inline.object_story_spec.link_data.message,
+    input.params.creative.message,
+  );
+  assert.equal(inline.object_story_spec.link_data.image_hash, hash);
+  assert.equal(
+    inline.object_story_spec.link_data.call_to_action.type,
+    "VIEW_INSTAGRAM_PROFILE",
+  );
+  assert.deepEqual(inline.contextual_multi_ads, { enroll_status: "OPT_OUT" });
+  assert.deepEqual(
+    inline.degrees_of_freedom_spec,
+    input.params.creative.degrees_of_freedom_spec,
+  );
+  assert.equal("validation_adset_id" in inline, false);
+  posts = [];
+  const o = await prepare(input);
+  const result = await execute(o);
+  assert.equal(result.status, 200);
+  assert.equal(posts.filter((p) => !p.params.execution_options).length, 1);
+  assert(posts.at(-1)!.path.endsWith("/adcreatives"));
+});
+
+test("creative-only success does not imply adset compatibility; a contextual ad rejection prevents preparing", async () => {
+  profileGroup();
+  const input = profileCreative();
+  const standalone: any = structuredClone(input);
+  delete standalone.params.validation_adset_id;
+  standalone.params.creative.call_to_action = "LEARN_MORE";
+  const checked = await validateAction(connection, ports)(req(standalone));
+  assert.equal(checked.status, 200);
+  assert.deepEqual((await checked.json()).validation, {
+    scope: "creative_only",
+    adset_compatibility: "not_checked",
+  });
+  posts = [];
+  mode = "profile-ad-rejected";
+  for (const handler of [validateAction, prepareAction]) {
+    const r = await handler(connection, ports)(req(input));
+    assert.equal(r.status, 502);
+    const body = await r.json();
+    assert.equal(body.provider_code, 100);
+    assert.equal(body.provider_subcode, 3858615);
+    assert.equal(body.provider_details.user_title, "Invalid CTA");
+    assert.equal(JSON.stringify(body).includes(access), false);
+    assert.equal(JSON.stringify(body).includes("private-secret"), false);
+  }
+  assert(
+    posts.every((p) => p.params.execution_options === '["validate_only"]'),
+  );
+  const rows = await db.pool.query("SELECT count(*) FROM meta_ads_operations");
+  assert.equal(Number(rows.rows[0].count), 0);
+});
+
+test("profile identity, destination and changed adset block writes; expired validation never authorizes execution", async () => {
+  profileGroup();
+  const input = profileCreative();
+  for (const variant of ["goal", "identity", "url"]) {
+    const changed = structuredClone(input);
+    if (variant === "goal")
+      group = { ...group, optimization_goal: "LINK_CLICKS" };
+    if (variant === "identity")
+      changed.params.creative.instagram_user_id = "999";
+    if (variant === "url")
+      changed.params.creative.link = "https://www.instagram.com/another/";
+    const r = await prepareAction(connection, ports)(req(changed));
+    assert.equal(r.status, 409);
+    assert.equal(posts.length, 0);
+    profileGroup();
+  }
+  const o = await prepare(input);
+  posts = [];
+  group = { ...group, destination_type: "INSTAGRAM_DIRECT" };
+  const r = await execute(o);
+  assert.equal(r.status, 409);
+  assert.equal(posts.length, 0);
+});
+
+test("profile ad creation is revalidated before prepare and execution, including ordinary provider rejections", async () => {
+  profileGroup();
+  const input = {
+    action: "ad.create",
+    params: { name: "profile ad", adset_id: "200", creative_id: "400" },
+  };
+  const o = await prepare(input);
+  assert.equal(o.plan.meta_validated, true);
+  assert.equal(o.plan.validation.adset_compatibility, "validated");
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0]!.params.execution_options, '["validate_only"]');
+  posts = [];
+  mode = "profile-ad-rejected";
+  const r = await execute(o);
+  assert.equal(r.status, 502);
+  const cancelled = await r.json();
+  assert.equal(cancelled.state, "cancelled");
+  assert.equal(cancelled.result.provider_subcode, 3858615);
+  assert.equal(cancelled.result.provider_details.user_title, "Invalid CTA");
+  assert(
+    posts.every((p) => p.params.execution_options === '["validate_only"]'),
+  );
+  assert.equal(posts.length, 1);
 });

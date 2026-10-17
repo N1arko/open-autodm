@@ -118,7 +118,7 @@ const promoted = z
       ])
       .optional(),
     custom_conversion_id: metaId.optional(),
-    instagram_user_id: metaId.optional(),
+    instagram_actor_id: metaId.optional(),
     application_id: metaId.optional(),
     object_store_url: url.optional(),
   })
@@ -135,6 +135,7 @@ const cta = z.enum([
   "GET_QUOTE",
   "MESSAGE_PAGE",
   "NO_BUTTON",
+  "VIEW_INSTAGRAM_PROFILE",
 ]);
 const story = { page_id: metaId, instagram_user_id: metaId.optional() };
 const creative = z.discriminatedUnion("kind", [
@@ -337,7 +338,9 @@ export const actionInput = z
     z
       .object({
         action: z.literal("creative.create"),
-        params: z.object({ name, creative }).strict(),
+        params: z
+          .object({ name, creative, validation_adset_id: metaId.optional() })
+          .strict(),
       })
       .strict(),
     z
@@ -365,6 +368,21 @@ export const actionInput = z
   ])
   .superRefine((v, ctx) => {
     const p = v.params as Record<string, unknown>;
+    if (v.action === "creative.create") {
+      const c = v.params.creative;
+      if (
+        "call_to_action" in c &&
+        c.call_to_action === "VIEW_INSTAGRAM_PROFILE" &&
+        (!v.params.validation_adset_id ||
+          !c.instagram_user_id ||
+          (c.kind !== "image" && c.kind !== "video") ||
+          !c.link)
+      )
+        ctx.addIssue({
+          code: "custom",
+          message: "profile_cta_requires_identity_link_and_adset",
+        });
+    }
     if (
       v.action === "creative.create" &&
       v.params.creative.kind === "instagram_direct"
@@ -515,6 +533,7 @@ export function paramsFor(a: Action): Record<string, unknown> {
     }
   }
   if (a.action === "creative.create") {
+    delete p.validation_adset_id;
     const c = (
       a.params as Extract<Action, { action: "creative.create" }>["params"]
     ).creative;

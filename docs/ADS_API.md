@@ -91,6 +91,8 @@ Upstream operations have a 12-second per-attempt timeout and a 1 MiB response li
 
 Provider error messages, tokens and raw provider paging URLs are never returned. The core owner API has no endpoint for accepting arbitrary Marketing API calls. Advertising writes use the constrained preparation/execution contract, budget limits and audit trail in [ADS_MANAGEMENT_API.md](ADS_MANAGEMENT_API.md).
 
+Available positive numeric `provider_code`/`provider_subcode` are returned for ordinary read rejections as well as rate errors. Sanitized text diagnostics are scoped to management `validate_only`; see [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md#диагностика-meta-и-rate-limit).
+
 Read rate limits include sanitized retry delay/scope/source and `Retry-After`; see [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md). Linked Page/Instagram resolution and full creative reads are also documented there.
 
 ## Official references
