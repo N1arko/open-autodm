@@ -43,6 +43,7 @@ let posts: { path: string; params: Record<string, string> }[],
   readPaths: string[],
   pageVisible: boolean,
   campaignObjective: string,
+  visibleImages: string[],
   group: Record<string, unknown>;
 const ports = (): ManagePorts => ({
   store: db.store,
@@ -229,7 +230,12 @@ before(async () => {
       });
     if (path.endsWith("adimages"))
       return json(res, {
-        data: [{ hash, name: "fixture", width: 1, height: 1 }],
+        data: visibleImages.map((hash) => ({
+          hash,
+          name: "fixture",
+          width: 1,
+          height: 1,
+        })),
       });
     if (path === "search" || path.endsWith("targetingsearch"))
       return json(res, {
@@ -263,6 +269,7 @@ beforeEach(async () => {
   mode = "ok";
   pageVisible = true;
   campaignObjective = "OUTCOME_ENGAGEMENT";
+  visibleImages = [hash];
   group = {
     id: "200",
     account_id: "123",
@@ -939,4 +946,68 @@ test("profile ad creation is revalidated before prepare and execution, including
     posts.every((p) => p.params.execution_options === '["validate_only"]'),
   );
   assert.equal(posts.length, 1);
+});
+
+test("one plan deduplicates exact object and library-page reads; every execution starts fresh", async () => {
+  const input = direct();
+  const context = {
+    ...input,
+    params: { ...input.params, validation_adset_id: "200" },
+  };
+  const prepared = await prepare(context);
+  assert.equal(readPaths.filter((path) => path === "200").length, 1);
+  assert.equal(readPaths.filter((path) => path === "100").length, 1);
+  readPaths = [];
+  assert.equal((await execute(prepared)).status, 200);
+  assert.equal(readPaths.filter((path) => path === "200").length, 1);
+  assert.equal(readPaths.filter((path) => path === "100").length, 1);
+
+  readPaths = [];
+  posts = [];
+  visibleImages = [hash, "ef".repeat(16)];
+  const carousel = {
+    action: "creative.create",
+    params: {
+      name: "same library",
+      creative: {
+        kind: "carousel",
+        page_id: "700",
+        instagram_user_id: "900",
+        link: "https://example.test/",
+        message: "fixture",
+        multi_share_optimized: false,
+        multi_share_end_card: false,
+        cards: [
+          { image_hash: hash, link: "https://example.test/a", title: "one" },
+          {
+            image_hash: "ef".repeat(16),
+            link: "https://example.test/b",
+            title: "two",
+          },
+        ],
+      },
+    },
+  };
+  const plan = await prepare(carousel);
+  assert.equal(
+    readPaths.filter((path) => path.endsWith("/adimages")).length,
+    1,
+  );
+  readPaths = [];
+  posts = [];
+  visibleImages = [hash];
+  assert.equal((await execute(plan)).status, 404);
+  assert.equal(posts.length, 0);
+  assert.equal(
+    readPaths.filter((path) => path.endsWith("/adimages")).length,
+    1,
+  );
+  visibleImages = [hash, "ef".repeat(16)];
+  const freshPlan = await prepare(carousel);
+  readPaths = [];
+  assert.equal((await execute(freshPlan)).status, 200);
+  assert.equal(
+    readPaths.filter((path) => path.endsWith("/adimages")).length,
+    1,
+  );
 });

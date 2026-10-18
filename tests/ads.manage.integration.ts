@@ -1006,3 +1006,31 @@ test("revoked Instagram creative access cancels a prepared operation before any 
   assert.equal((await execute(o)).status, 409);
   assert.equal(posts.length, 2);
 });
+
+test("ABO ad activation budgets four fresh Graph reads per phase; prepare and execute never reuse validation snapshots", async () => {
+  await enable();
+  objects["100"]!.daily_budget = "0";
+  objects["200"]!.daily_budget = "1000";
+  const change = {
+    action: "ad.update",
+    object_id: "400",
+    params: { status: "ACTIVE" },
+  };
+  const expected = ["400", "200", "100", "100/adsets"];
+  const validation = await validateAction(connection, ports)(req(change));
+  assert.equal(validation.status, 200);
+  assert.deepEqual(readPaths, expected);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0]!.params.execution_options, '["validate_only"]');
+  readPaths = [];
+  posts = [];
+  const operation = await prepare(change);
+  assert.deepEqual(readPaths, expected);
+  assert.equal(posts.length, 0);
+  readPaths = [];
+  assert.equal((await execute(operation, true)).status, 200);
+  assert.deepEqual(readPaths, expected);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0]!.params.execution_options, undefined);
+  assert.equal(posts[0]!.params.status, "ACTIVE");
+});

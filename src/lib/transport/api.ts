@@ -6,6 +6,7 @@ import { getEnv } from "@/lib/env";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveEndpoint } from "./http";
 import { transportStore, type TransportMessage } from "./store";
+import type { MetaUsage, RetryPolicy } from "@/lib/ads/rateLimit";
 
 export interface ProviderDetails {
   message?: string;
@@ -18,7 +19,13 @@ export class ApiError extends Error {
   providerDetails?: ProviderDetails;
   retryAfterSeconds?: number;
   retryScope?: "read" | "validation" | "write_rejected";
-  retrySource?: "retry_after" | "business_usage" | "default";
+  retrySource?:
+    | "retry_after"
+    | "business_usage"
+    | "ad_account_usage"
+    | "default";
+  providerUsage?: MetaUsage;
+  retryPolicy?: RetryPolicy;
   constructor(
     public status: number,
     message: string,
@@ -144,6 +151,8 @@ export function providerErrorFields(error: ApiError) {
     ...(error.providerDetails
       ? { provider_details: error.providerDetails }
       : {}),
+    ...(error.providerUsage ? { provider_usage: error.providerUsage } : {}),
+    ...(error.retryPolicy ? { retry_policy: error.retryPolicy } : {}),
   };
 }
 export const respond = (body: unknown, status = 200) =>

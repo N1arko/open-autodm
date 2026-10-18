@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ApiError } from "@/lib/transport/api";
 import { metaId, type Collection } from "./queries";
-import { isRateLimit, retryAfter } from "./rateLimit";
+import { isRateLimit, rateLimitDetails, type RetryInfo } from "./rateLimit";
 import { creativeRead, CREATIVE_FIELDS, providerJson } from "./readback";
 import {
   extendedInsightFields,
@@ -179,7 +179,8 @@ export class AdsMetaError extends ApiError {
   constructor(
     code: string,
     public providerCode = 0,
-    retry?: ReturnType<typeof retryAfter>,
+    retry?: RetryInfo,
+    public providerSubcode = 0,
   ) {
     super(
       code === "ads_permission_required"
@@ -195,6 +196,8 @@ export class AdsMetaError extends ApiError {
       this.retryAfterSeconds = retry.seconds;
       this.retrySource = retry.source;
       this.retryScope = "read";
+      this.providerUsage = retry.usage;
+      this.retryPolicy = retry.policy;
     }
   }
 }
@@ -271,10 +274,12 @@ export function adsMeta(
       throw new AdsMetaError("meta_unavailable");
     }
     if (!res.ok || data.error) {
-      const err = data.error as { code?: number; message?: string } | undefined,
+      const err = data.error as
+          | { code?: number; error_subcode?: number; message?: string }
+          | undefined,
         code = Number.isInteger(err?.code) ? err!.code! : 0;
       const limited = isRateLimit(res.status, code),
-        retry = limited ? retryAfter(res.headers) : undefined;
+        retry = limited ? rateLimitDetails(res.headers, code) : undefined;
       if (retry && retry.seconds <= 1 && attempt === 0) {
         await new Promise((resolve) =>
           setTimeout(resolve, retry.seconds * 1000),
@@ -295,6 +300,7 @@ export function adsMeta(
                   : "meta_rejected",
         code,
         retry,
+        Number.isSafeInteger(err?.error_subcode) ? err!.error_subcode : 0,
       );
       if (
         edge === "insights" &&

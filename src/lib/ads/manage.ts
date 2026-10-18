@@ -156,15 +156,30 @@ async function plan(
   let validateInstagramCreative = false;
   let creativeAdsetId: string | undefined;
   let effectiveAction = action;
+  // One snapshot of each exact read per plan; execute always starts a fresh plan.
+  const objectReads = new Map<string, Promise<MetaObject>>();
+  const assetReads = new Map<string, ReturnType<Writer["assets"]>>();
   const object = async (id: string, kind: string) => {
-    const v = await p.writer.object(a.ad_account_id, id, kind, access);
+    const key = `${kind}:${id}`;
+    let read = objectReads.get(key);
+    if (!read) {
+      read = p.writer.object(a.ad_account_id, id, kind, access);
+      objectReads.set(key, read);
+    }
+    const v = await read;
     deps[`${kind}:${id}`] = v;
     return v;
   };
   const asset = async (kind: "pages" | "images" | "videos", id: string) => {
     let after: string | undefined;
     for (let i = 0; i < 10; i++) {
-      const page = await p.writer.assets(a.ad_account_id, access, kind, after);
+      const key = `${kind}:${after ?? ""}`;
+      let read = assetReads.get(key);
+      if (!read) {
+        read = p.writer.assets(a.ad_account_id, access, kind, after);
+        assetReads.set(key, read);
+      }
+      const page = await read;
       const row = page.data.find((v) =>
         "hash" in v ? v.hash === id : "id" in v && v.id === id,
       );

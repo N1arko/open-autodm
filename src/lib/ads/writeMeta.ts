@@ -4,7 +4,7 @@ import { providerDetails } from "./diagnostics";
 import { metaId } from "./queries";
 import { actionEdge, paramsFor, type Action } from "./actions";
 import { isResource, resourcePath, type ResourceKind } from "./resourceActions";
-import { isRateLimit, retryAfter } from "./rateLimit";
+import { isRateLimit, rateLimitDetails, type RetryInfo } from "./rateLimit";
 import { creativeRead, CREATIVE_FIELDS, providerJson } from "./readback";
 
 export class WriteMetaError extends ApiError {
@@ -13,7 +13,7 @@ export class WriteMetaError extends ApiError {
     public uncertain = false,
     public providerCode = 0,
     public providerSubcode = 0,
-    retry?: ReturnType<typeof retryAfter>,
+    retry?: RetryInfo,
     scope: "read" | "validation" | "write_rejected" = "read",
     details?: ProviderDetails,
   ) {
@@ -32,6 +32,8 @@ export class WriteMetaError extends ApiError {
       this.retryAfterSeconds = retry.seconds;
       this.retrySource = retry.source;
       this.retryScope = scope;
+      this.providerUsage = retry.usage;
+      this.retryPolicy = retry.policy;
     }
   }
 }
@@ -149,7 +151,7 @@ export function writeMeta(
         code = Number(e?.code ?? 0),
         sub = Number(e?.error_subcode ?? 0);
       const limited = isRateLimit(r.status, code),
-        retry = limited ? retryAfter(r.headers) : undefined;
+        retry = limited ? rateLimitDetails(r.headers, code) : undefined;
       if (
         (!post || validation) &&
         retry &&

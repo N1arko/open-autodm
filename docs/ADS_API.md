@@ -95,6 +95,8 @@ Available positive numeric `provider_code`/`provider_subcode` are returned for o
 
 Read rate limits include sanitized retry delay/scope/source and `Retry-After`; see [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md). Linked Page/Instagram resolution and full creative reads are also documented there.
 
+Rate errors also expose safe `provider_usage` and `retry_policy`; code 17 without a positive provider delay uses a 300-second service fallback. Read errors preserve numeric provider subcodes. Caller backoff, freshness and observed request costs are defined in [ADS_RATE_LIMITS.md](ADS_RATE_LIMITS.md).
+
 ## Official references
 
 - [Meta Marketing API collection, access and account model](https://www.postman.com/meta/facebook-marketing-api/documentation/0zr4mes/facebook-marketing-api-mapi?entity=request-31691153-7fe71e07-6a6f-4b86-b098-02788f138d0b)
