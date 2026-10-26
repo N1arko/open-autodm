@@ -10,6 +10,7 @@ import {
   getMediaInsights,
   getAudienceInsights,
   listAccountMedia,
+  listAccountStories,
   getInsightsHistory,
   getInsightsSettings,
   setInsightsSettings,
@@ -118,7 +119,7 @@ before(async () => {
         id: scopedOwner ? apiScopedIg : ig,
         user_id: mode === "other_token_identity" ? "999" : ig,
       });
-    if (u.pathname.endsWith("/media"))
+    if (u.pathname.endsWith("/media") || u.pathname.endsWith("/stories"))
       return json(response, {
         data: [
           {
@@ -540,4 +541,18 @@ test("history pagination exposes all rows without overlap; expired and paused ac
     409,
   );
   assert.equal(calls, 0);
+});
+
+test("active Stories use the account-scoped stories edge with safe pagination", async () => {
+  const r = await listAccountStories(account, ports)(req("?limit=1&after=previous"));
+  assert.equal(r.status, 200);
+  const page = await r.json();
+  assert.equal(page.data.length, 1);
+  assert.equal(page.next_cursor, "opaque-cursor");
+  assert.ok(queries.at(-1)!.pathname.endsWith(`/${ig}/stories`));
+  assert.equal(queries.at(-1)!.searchParams.get("fields"), "id,media_type,timestamp");
+  const before = calls;
+  assert.equal((await listAccountStories(account, ports)(req("", "other-token"))).status, 404);
+  assert.equal((await listAccountStories(account, ports)(req("?limit=0"))).status, 400);
+  assert.equal(calls, before);
 });

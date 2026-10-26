@@ -37,6 +37,7 @@ let account: string,
   linkReads = 0,
   mode = "ok";
 let receivedCover: string | null = null;
+let formatForms: URLSearchParams[] = [];
 const req = (
   method: string,
   value?: unknown,
@@ -108,6 +109,12 @@ before(async () => {
     const path = new URL(request.url!, metaBase).pathname;
     if (request.method === "POST" && path.endsWith("/media")) {
       const form = new URLSearchParams(await body(request));
+      if (mode === "formats") {
+        formatForms.push(form);
+        created++;
+        json(response, { id: String(99000 + created) });
+        return;
+      }
       assert.equal(form.get("media_type"), "REELS");
       assert.equal(form.get("video_url"), video);
       assert.equal(form.get("caption"), "Hello 👋");
@@ -117,7 +124,7 @@ before(async () => {
       json(response, { id: "99001" });
     } else if (request.method === "POST" && path.endsWith("/media_publish")) {
       const form = new URLSearchParams(await body(request));
-      assert.equal(form.get("creation_id"), "99001");
+      assert.equal(form.get("creation_id"), mode === "formats" ? String(99000 + created) : "99001");
       published++;
       if (mode === "disconnect") {
         request.socket.destroy();
@@ -134,6 +141,9 @@ before(async () => {
       if (mode === "slow")
         await new Promise((resolve) => setTimeout(resolve, 22_000));
       json(response, { id: "123456" });
+    } else if (mode === "formats" && /\/990\d+$/.test(path)) {
+      polls++;
+      json(response, { status_code: "FINISHED" });
     } else if (path.endsWith("/99001")) {
       polls++;
       json(response, { status_code: polls === 1 ? "IN_PROGRESS" : "FINISHED" });
@@ -159,6 +169,7 @@ beforeEach(async () => {
   created = published = polls = linkReads = 0;
   mode = "ok";
   receivedCover = null;
+  formatForms = [];
   await db.pool.query(
     "INSERT INTO instagram_accounts(id,user_id,instagram_user_id,username,access_token_encrypted) VALUES($1,$2,$3,$4,$5)",
     [account, owner, "17840001", "fixture", encrypt("fake-meta-token", key)],
@@ -274,6 +285,115 @@ test("cover migration accepts the prior eight-argument enqueue RPC", async () =>
     [owner, account, video, "Hello 👋", true, null, "legacy", "legacy-hash"],
   );
   assert.equal(result.rows[0].job.cover_url, null);
+  assert.equal(result.rows[0].job.media_type, "REELS");
+});
+
+test("scheduled mixed carousel resumes after a lost child-save acknowledgement and publishes once in order", async () => {
+  mode = "formats";
+  const items = [
+    { media_type: "VIDEO", url: video },
+    { media_type: "IMAGE", url: "https://8.8.8.8/slide.jpg" },
+    { media_type: "VIDEO", url: "https://8.8.8.8/end.mp4" },
+  ];
+  const payload = { account_id: account, media_type: "CAROUSEL", items, caption: "Our slides", publish_at: new Date(Date.now() + 3600_000).toISOString() };
+  const response = await createPublication(req("POST", payload));
+  assert.equal(response.status, 202);
+  const id = (await response.json()).id;
+  assert.equal(await drainPublications(db.store, ports()), 0);
+  await db.pool.query("UPDATE instagram_publications SET publish_at=now() WHERE id=$1", [id]);
+  const lost: TransportStore = { async rpc<T>(name: string, args = {}) {
+    const result = await db.store.rpc<T>(name, args);
+    if (name === "publishing_save_child") throw Error("ack lost");
+    return result;
+  }};
+  await tick(lost);
+  assert.deepEqual((await row(id)).child_container_ids, ["99001"]);
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal((await row(id)).status, "published");
+  assert.equal(published, 1);
+  assert.equal(created, 4);
+  assert.equal(formatForms[0]!.get("video_url"), items[0]!.url);
+  assert.equal(formatForms[1]!.get("image_url"), items[1]!.url);
+  assert.equal(formatForms[2]!.get("video_url"), items[2]!.url);
+  assert.equal(formatForms[3]!.get("children"), "99001,99002,99003");
+  const visible = await (await getPublication(id)(req("GET"))).json();
+  assert.deepEqual(visible.items, items);
+  assert.equal(visible.media_type, "CAROUSEL");
+  assert.equal("child_container_ids" in visible, false);
+  assert.equal((await createPublication(req("POST", payload))).status, 202);
+  assert.equal((await createPublication(req("POST", { ...payload, items: [...items].reverse() }))).status, 409);
+});
+
+test("image and video Stories publish once without permalink retries and remain owner-scoped", async () => {
+  mode = "formats";
+  for (const source of [{ video_url: video }, { image_url: "https://8.8.8.8/photo.jpg" }]) {
+    const payload = { account_id: account, media_type: "STORIES", ...source };
+    const response = await createPublication(req("POST", payload, "owner-token", Object.keys(source)[0]));
+    assert.equal(response.status, 202);
+    const id = (await response.json()).id;
+    await tick(); await tick(); await tick();
+    const p = await row(id);
+    assert.equal(p.status, "published");
+    assert.equal(p.permalink, null);
+    assert.equal(p.metadata_attempts, 8);
+    assert.equal((await getPublication(id)(req("GET", undefined, "other-token"))).status, 404);
+  }
+  assert.equal(created, 2);
+  assert.equal(published, 2);
+  assert.equal(linkReads, 0);
+  assert.equal(await tick(), 0);
+});
+
+test("carousel item URLs are checked before enqueue and rechecked before every child upload", async () => {
+  mode = "formats";
+  const payload = { account_id: account, media_type: "CAROUSEL", items: [
+    { media_type: "VIDEO", url: video },
+    { media_type: "IMAGE", url: "https://127.0.0.1/private.jpg" },
+  ] };
+  const invalid = await createPublication(req("POST", payload));
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json()).error, "invalid_item_url");
+  payload.items[1]!.url = "https://8.8.8.8/photo.jpg";
+  const valid = await createPublication(req("POST", payload));
+  assert.equal(valid.status, 202);
+  const id = (await valid.json()).id;
+  await tick();
+  await tick(db.store, { validateVideo: async () => { throw Error("DNS rebinding"); } });
+  assert.equal((await row(id)).status, "failed");
+  assert.equal((await row(id)).error_code, "invalid_item_url");
+  assert.equal(created, 1);
+  assert.equal(published, 0);
+  const story = await createPublication(req("POST", { account_id: account, media_type: "STORIES", image_url: "https://10.0.0.1/x" }, "owner-token", "private-story"));
+  assert.equal(story.status, 400);
+});
+
+test("carousel cancellation fences a late child save and child RPC remains service-only", async () => {
+  mode = "formats";
+  const response = await createPublication(req("POST", { account_id: account, media_type: "CAROUSEL", items: Array(2).fill({ media_type: "VIDEO", url: video }) }));
+  const id = (await response.json()).id;
+  const [claim] = await db.store.rpc<Record<string, unknown>[]>("publishing_claim", { p_limit: 1 });
+  await db.store.rpc("publishing_context", { p_id: id, p_token: claim!.claim_token });
+  await cancelPublication(id)(req("DELETE"));
+  assert.equal(await db.store.rpc("publishing_save_child", { p_id: id, p_token: claim!.claim_token, p_index: 0, p_container: "99001" }), false);
+  assert.deepEqual((await row(id)).child_container_ids, []);
+  const acl = await db.pool.query("SELECT has_function_privilege('authenticated','publishing_save_child(uuid,uuid,integer,text)','EXECUTE') AS client,has_function_privilege('service_role','publishing_save_child(uuid,uuid,integer,text)','EXECUTE') AS worker");
+  assert.equal(acl.rows[0].client, false);
+  assert.equal(acl.rows[0].worker, true);
+});
+
+test("a carousel with uncertain remote publish is never submitted again", async () => {
+  mode = "formats";
+  const response = await createPublication(req("POST", { account_id: account, media_type: "CAROUSEL", items: Array(2).fill({ media_type: "VIDEO", url: video }) }));
+  const id = (await response.json()).id;
+  await tick(); await tick(); await tick();
+  const meta = ports().meta;
+  await tick(db.store, { meta: { ...meta, publish: async () => {
+    published++;
+    throw new PublishingMetaError("meta_http_500_code_2", true, true);
+  } } });
+  assert.equal((await row(id)).status, "publication_unknown");
+  assert.equal(await tick(), 0);
+  assert.equal(published, 1);
 });
 test("owner isolation, bot credentials, input validation, cancellation and expired tokens", async () => {
   const id = await queued();
