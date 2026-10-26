@@ -1,3 +1,5 @@
+import type { PublicationItem } from "./input";
+
 export class PublishingMetaError extends Error {
   constructor(
     public code: string,
@@ -18,6 +20,9 @@ export interface PublishingMeta {
     token: string,
     cover?: string,
   ): Promise<string>;
+  createItem(account: string, item: PublicationItem, token: string): Promise<string>;
+  createCarousel(account: string, children: string[], caption: string, token: string): Promise<string>;
+  createStory(account: string, source: { video_url?: string; image_url?: string }, token: string): Promise<string>;
   status(container: string, token: string): Promise<string>;
   publish(account: string, container: string, token: string): Promise<string>;
   permalink(media: string, token: string): Promise<string>;
@@ -100,6 +105,24 @@ export function publishingMeta(
     return data.id;
   };
   return {
+    async createItem(account, item, token) {
+      return id(await call(`${account}/media`, token, {
+        is_carousel_item: "true",
+        ...(item.media_type === "VIDEO"
+          ? { media_type: "VIDEO", video_url: item.url }
+          : { image_url: item.url }),
+      }));
+    },
+    async createCarousel(account, children, caption, token) {
+      return id(await call(`${account}/media`, token, {
+        media_type: "CAROUSEL", children: children.join(","), caption,
+      }));
+    },
+    async createStory(account, source, token) {
+      return id(await call(`${account}/media`, token, {
+        media_type: "STORIES", ...source,
+      }));
+    },
     async create(account, video, caption, feed, token, cover) {
       return id(
         await call(`${account}/media`, token, {

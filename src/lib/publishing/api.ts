@@ -10,23 +10,12 @@ import {
 } from "@/lib/transport/api";
 import { transportStore } from "@/lib/transport/store";
 import { validateVideoUrl } from "./url";
+import { publicationSchema, publicationHashInput } from "./input";
+export { publicationSchema } from "./input";
 export { validateVideoUrl } from "./url";
 
-export const publicationSchema = z
-  .object({
-    account_id: z.string().uuid(),
-    video_url: z.string().url().max(4096),
-    cover_url: z.string().url().max(4096).optional(),
-    caption: z
-      .string()
-      .refine((s) => Array.from(s).length <= 2200)
-      .default(""),
-    share_to_feed: z.boolean().default(true),
-    publish_at: z.string().datetime({ offset: true }).optional(),
-  })
-  .strict();
 const visible =
-  "id,account_id,video_url,cover_url,caption,share_to_feed,publish_at,status,container_id,media_id,permalink,error_code,attempts,created_at,updated_at,published_at";
+  "id,account_id,media_type,video_url,image_url,items,cover_url,caption,share_to_feed,publish_at,status,container_id,media_id,permalink,error_code,attempts,created_at,updated_at,published_at";
 export function publicPublication(row: Record<string, unknown>) {
   return Object.fromEntries(visible.split(",").map((k) => [k, row[k]]));
 }
@@ -49,11 +38,15 @@ export const createPublication = apiRoute(async (request) => {
     throw new ApiError(415, "json_required");
   let data: unknown;
   try {
-    data = JSON.parse(await readBody(request, 16384));
+    data = JSON.parse(await readBody(request, 131072));
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(400, "invalid_json");
   }
+  // Bound collection work before validation, including Zod versions that check .max() late.
+  if (data && typeof data === "object" && "items" in data &&
+      Array.isArray(data.items) && data.items.length > 20)
+    throw new ApiError(400, "invalid_body");
   const parsed = publicationSchema.safeParse(data);
   if (!parsed.success) throw new ApiError(400, "invalid_body");
   const input = parsed.data;
@@ -61,7 +54,7 @@ export const createPublication = apiRoute(async (request) => {
   if (at && Date.parse(at) > Date.now() + 366 * 86400_000)
     throw new ApiError(400, "schedule_too_far");
   // Replays must still return the original result after a signed video URL expires.
-  const requestHash = hash(JSON.stringify({ ...input, publish_at: at }));
+  const requestHash = hash(publicationHashInput(input, at));
   const db = createServiceClient();
   const { data: existing, error } = await db
     .from("instagram_publications")
@@ -71,29 +64,33 @@ export const createPublication = apiRoute(async (request) => {
     .maybeSingle();
   if (error) throw new Error("db_unavailable");
   if (!existing) {
-    try {
-      await validateVideoUrl(input.video_url);
-    } catch {
-      throw new ApiError(400, "invalid_video_url");
-    }
-    if (input.cover_url) {
+    for (const [url, code] of [
+      [input.video_url, "invalid_video_url"],
+      [input.image_url, "invalid_image_url"],
+      [input.cover_url, "invalid_cover_url"],
+      ...(input.items ?? []).map((item) => [item.url, "invalid_item_url"]),
+    ]) {
+      if (!url) continue;
       try {
-        await validateVideoUrl(input.cover_url);
+        await validateVideoUrl(url);
       } catch {
-        throw new ApiError(400, "invalid_cover_url");
+        throw new ApiError(400, code!);
       }
     }
   }
   const row = await rpc<Record<string, unknown>>("publishing_enqueue", {
     p_user: user,
     p_account: input.account_id,
-    p_url: input.video_url,
+    p_url: input.video_url ?? null,
     p_caption: input.caption,
     p_feed: input.share_to_feed,
     p_at: at,
     p_key: key,
     p_hash: requestHash,
     p_cover: input.cover_url ?? null,
+    p_kind: input.media_type ?? "REELS",
+    p_image: input.image_url ?? null,
+    p_items: input.items ?? [],
   });
   return respond(publicPublication(row), 202);
 });

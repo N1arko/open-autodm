@@ -78,6 +78,7 @@ export const getAudienceInsights = (id: string, ports = defaultInsightsPorts) =>
 export const listAccountMedia = (
   id: string,
   ports: () => InsightsPorts = defaultInsightsPorts,
+  edge: "media" | "stories" = "media",
 ) =>
   apiRoute(async (request) => {
     const a = await ownedAccount(await owner(request), id);
@@ -99,9 +100,12 @@ export const listAccountMedia = (
         accessToken(a, p),
         limit,
         after ?? undefined,
+        edge,
       ),
     );
   });
+export const listAccountStories = (id: string, ports = defaultInsightsPorts) =>
+  listAccountMedia(id, ports, "stories");
 export const getInsightsSettings = (id: string) =>
   apiRoute(async (request) =>
     respond(await settings(await ownedAccount(await owner(request), id))),

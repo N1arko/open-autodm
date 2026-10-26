@@ -4,9 +4,9 @@
 
 # open-autoDM
 
-**Open-source, self-hosted Instagram messaging, Reel publishing, Insights and Meta advertising.**
+**Open-source, self-hosted Instagram messaging, Reels, carousels, Stories, Insights and Meta advertising.**
 
-Connect external bots, publish scheduled Reels, read account and advertising metrics,
+Connect external bots, publish scheduled Reels, carousels and Stories, read account and advertising metrics,
 and manage campaigns through an owner HTTP API. The service also includes the original
 keyword and comment-to-DM automation. Meta supplies the official platform APIs;
 external bots own their LLM calls and conversation history.
@@ -34,7 +34,7 @@ $25/month tools, and new features land here regularly. **Watch** the repo to cat
 | --- | --- |
 | Управление без входа в панель | [API владельца](docs/AGENT_API.md) |
 | Любые внешние обработчики Direct | [API ботов](docs/BOT_API.md) |
-| Reels, расписание и обложки | [Публикации](docs/PUBLISHING_API.md) |
+| Reels, видео-карусели, Stories, расписание и обложки | [Публикации](docs/PUBLISHING_API.md) |
 | Статистика Instagram и наблюдения | [Insights](docs/INSIGHTS_API.md) |
 | Рекламные кабинеты и отчёты | [Чтение рекламы](docs/ADS_API.md) |
 | Рекламные подписки, посещения профиля, стоимость и дневная динамика | [Результаты рекламы](docs/ADS_REPORTING_API.md) |
