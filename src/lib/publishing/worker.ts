@@ -3,6 +3,7 @@ import { getEnv } from "@/lib/env";
 import { createLogger } from "@/lib/logger";
 import { transportStore, type TransportStore } from "@/lib/transport/store";
 import { validateVideoUrl } from "./url";
+import type { PublicationItem } from "./input";
 import {
   PublishingMetaError,
   PUBLISH_TIMEOUT_MS,
@@ -15,7 +16,11 @@ interface Publication {
   claim_token: string;
   status: string;
   account_id: string;
-  video_url: string;
+  media_type: "REELS" | "CAROUSEL" | "STORIES";
+  video_url: string | null;
+  image_url: string | null;
+  items: PublicationItem[];
+  child_container_ids: string[];
   cover_url: string | null;
   caption: string;
   share_to_feed: boolean;
@@ -81,20 +86,52 @@ async function run(
   if (!p.container_id) {
     let container: string;
     let urlError = "invalid_video_url";
+    let childIndex: number | null = null;
     try {
-      await ports.validateVideo(p.video_url);
-      if (p.cover_url) {
-        urlError = "invalid_cover_url";
-        await ports.validateVideo(p.cover_url);
+      if (p.media_type === "CAROUSEL") {
+        const children = p.child_container_ids;
+        // Each earlier child was ready before the next one was created.
+        // Check the last upload before adding another child or the parent.
+        if (children.length) {
+          const status = await ports.meta.status(children[children.length - 1]!, token);
+          if (status === "ERROR" || status === "EXPIRED") {
+            await finish("failed", { p_error: `child_container_${status.toLowerCase()}` });
+            return;
+          }
+          if (status !== "FINISHED") {
+            await finish("processing", { p_delay: 15 });
+            return;
+          }
+        }
+        if (children.length < p.items.length) {
+          childIndex = children.length;
+          const item = p.items[childIndex]!;
+          urlError = "invalid_item_url";
+          await ports.validateVideo(item.url);
+          container = await ports.meta.createItem(context.account.instagram_user_id, item, token);
+        } else {
+          container = await ports.meta.createCarousel(context.account.instagram_user_id, children, p.caption, token);
+        }
+      } else if (p.media_type === "STORIES") {
+        urlError = p.video_url ? "invalid_video_url" : "invalid_image_url";
+        await ports.validateVideo((p.video_url ?? p.image_url)!);
+        container = await ports.meta.createStory(context.account.instagram_user_id,
+          p.video_url ? { video_url: p.video_url } : { image_url: p.image_url! }, token);
+      } else {
+        await ports.validateVideo(p.video_url!);
+        if (p.cover_url) {
+          urlError = "invalid_cover_url";
+          await ports.validateVideo(p.cover_url);
+        }
+        container = await ports.meta.create(
+          context.account.instagram_user_id,
+          p.video_url!,
+          p.caption,
+          p.share_to_feed,
+          token,
+          p.cover_url ?? undefined,
+        );
       }
-      container = await ports.meta.create(
-        context.account.instagram_user_id,
-        p.video_url,
-        p.caption,
-        p.share_to_feed,
-        token,
-        p.cover_url ?? undefined,
-      );
     } catch (error) {
       const meta = error instanceof PublishingMetaError ? error : null;
       await finish(meta?.retryable ? "processing" : "failed", {
@@ -103,7 +140,12 @@ async function run(
       });
       return;
     }
-    await finish("processing", { p_container: container, p_delay: 15 });
+    if (childIndex !== null) {
+      // A separate fenced write makes the ordered child list durable across restarts.
+      await store.rpc<boolean>("publishing_save_child", {
+        p_id: p.id, p_token: job.claim_token, p_index: childIndex, p_container: container,
+      });
+    } else await finish("processing", { p_container: container, p_delay: 15 });
     return;
   }
   let status: string;

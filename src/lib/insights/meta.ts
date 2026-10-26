@@ -71,6 +71,7 @@ export interface InsightsMeta {
     token: string,
     limit: number,
     after?: string,
+    edge?: "media" | "stories",
   ): Promise<{ data: Media[]; next_cursor: string | null }>;
   insights(
     target: string,
@@ -256,9 +257,9 @@ export function insightsMeta(
       }
       return parsed.data;
     },
-    async list(account, token, limit, after) {
-      const data = await call(`${account}/media`, token, {
-        fields: "id,media_type,permalink,timestamp",
+    async list(account, token, limit, after, edge = "media") {
+      const data = await call(`${account}/${edge}`, token, {
+        fields: edge === "stories" ? "id,media_type,timestamp" : "id,media_type,permalink,timestamp",
         limit: String(limit),
         ...(after ? { after } : {}),
       });

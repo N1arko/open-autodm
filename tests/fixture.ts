@@ -86,7 +86,9 @@ export async function databaseFixture() {
   const store: TransportStore = {
     async rpc<T>(name: string, args: Record<string, unknown> = {}) {
       const keys = Object.keys(args),
-        values = Object.values(args);
+        values = Object.entries(args).map(([key, value]) =>
+          name === "publishing_enqueue" && key === "p_items" ? JSON.stringify(value) : value,
+        );
       const call = `public.${ident(name)}(${keys.map((k, i) => `${ident(k)}=>$${i + 1}`).join(",")})`;
       if (name === "transport_claim")
         return (

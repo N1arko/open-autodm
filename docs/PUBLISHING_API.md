@@ -1,10 +1,11 @@
-# Reels publishing API
+# Instagram publishing API
 
-An owner or authorized AI agent can publish an existing video to a connected Instagram professional account, immediately or at a specified time. The API creates a durable job; Instagram downloads and processes the video. No video transcoding or file upload is performed by this service.
+An owner or authorized AI agent can publish Reels, ordered photo/video carousels and photo/video Stories, immediately or at a specified time. The API creates a durable job; Instagram downloads and processes the media. Video preparation and hosting are external to this service. Stories publishing requires a business account; actual grants and eligibility are checked by Meta.
 
 ## Prerequisites
 
 - Apply all migrations, including `20261005000001_reel_publications.sql` and `20261006000001_reel_covers.sql`; run the VPS worker or the secured processing cron.
+- Apply `20261025000001_carousels_stories.sql` before deploying the app and worker that use the additional media types. Existing Reel rows, request hashes and enqueue RPC callers are preserved.
 - Add `instagram_business_content_publish` to the Meta app and obtain the account's consent for that permission. Generate the authorization URL using `GET /api/instagram/connect?publishing=true`; this adds publishing to the existing basic, messages and comments scopes. The default connection remains messaging only. Previously connected accounts need renewed consent. Meta access/review/publication requirements still apply.
 - Supply a direct, public HTTPS video URL (port 443), without embedded credentials or fragments. Private/reserved addresses are rejected independently of any internal bot webhook exceptions. The source must remain available when the scheduled job runs and until Instagram finishes processing it. An expiring signed URL must cover that whole interval.
 - The video must meet [Meta's Reels publishing requirements](https://www.postman.com/meta/workspace/instagram/documentation/23987686-9386f468-7714-490f-9bfc-9442db5c8f00). Provider validation errors appear on the job. This service does not inspect video codecs before submitting it.
@@ -31,6 +32,62 @@ Use `Authorization: Bearer adm_<owner credential>` as described in [AGENT_API.md
 `cover_url` is optional. Supply a public HTTPS JPEG up to 8 MB, preferably 9:16, which remains available until processing completes. The URL follows the same address, port and credential restrictions as `video_url`, checked at enqueue and again by the worker. Invalid addresses return `400 invalid_cover_url`. Meta checks the actual image format and size. Without a cover URL, Instagram uses its default video thumbnail. Meta may crop the cover for the feed/profile grid. See [Meta's media reference and cover specifications](https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-user/media).
 
 `202` returns a publication record with `id`, `account_id`, `video_url`, `cover_url` (null when absent), `caption`, `publish_at`, `share_to_feed`, `status`, `container_id`, `media_id`, `permalink`, `error_code`, attempts and timestamps. It acknowledges the queue, not a published post. Reusing the same key and payload returns the same record. Reusing a key with different content, including the cover URL, returns `409 idempotency_conflict`. Keep keys stable across HTTP retries; never generate a replacement key merely because a request timed out.
+
+## Carousels and Stories
+
+The same POST supports `media_type: "CAROUSEL"` and `media_type: "STORIES"`.
+Omitting the field, or specifying `REELS`, retains the existing Reel contract and idempotency hash.
+The response also includes `media_type`, `image_url` and ordered `items`; unused sources are null/empty.
+
+An ordered carousel contains 2–20 images, videos, or a mixture. Each `items` entry is
+`{"media_type":"IMAGE"|"VIDEO","url":"https://…"}`. Use JPEG for images and Meta-compatible MP4/MOV for video.
+Video slides retain their source audio. Meta controls cropping; use matching aspect ratios across slides.
+Only the parent has a caption; `video_url`, `image_url` and `cover_url` at the top level are rejected.
+
+```json
+{
+  "account_id": "<internal Instagram UUID>",
+  "media_type": "CAROUSEL",
+  "caption": "One song, several edits. Swipe to compare.",
+  "items": [
+    {"media_type":"VIDEO","url":"https://cdn.example.com/01.mp4"},
+    {"media_type":"IMAGE","url":"https://cdn.example.com/02.jpg"}
+  ],
+  "publish_at": "2026-11-01T21:00:00-03:00"
+}
+```
+
+For a Story supply exactly one `video_url` or `image_url`. `items`, `cover_url` and non-empty
+`caption` are rejected: text overlays belong in the source file. `share_to_feed` applies only to Reels.
+
+```json
+{
+  "account_id": "<internal Instagram UUID>",
+  "media_type": "STORIES",
+  "video_url": "https://cdn.example.com/story.mp4"
+}
+```
+
+Stories use the same publish states and expose the returned `media_id`. On success `permalink`
+remains null and no permalink retries are scheduled. Stories expire at Meta after approximately
+24 hours; their publication history stays in our queue. `GET /api/v1/accounts/{id}/stories?limit=25&after={cursor}`
+returns active Stories as `{data:[{id,media_type,timestamp}],next_cursor}`. The pagination bounds
+and owner authorization match the existing media list; no Insights grant is needed for this list.
+
+This release uploads a Story photo/video. Native Reel-card reposts, link/poll stickers,
+profile pins and first comments are outside this endpoint. Reusing a Reel's source video
+as a Story creates a separate Story upload.
+
+Every source URL is validated at enqueue and again immediately before Meta receives it.
+Carousel child IDs are saved one at a time under a fenced claim. The next upload waits until
+the previous child is ready; the parent preserves the input order. Restarting or losing a
+child-save acknowledgement resumes from the saved list. An upload whose acknowledgement
+was lost before persistence can leave an unused Meta container; it cannot create a second slide
+in the saved parent. Parent publication uses the existing durable publish marker and
+`publication_unknown` rules. Cancellation prevents a late child save from changing the row.
+
+Provider references: [publishing guide](https://developers.facebook.com/documentation/instagram-platform/content-publishing),
+[container parameters](https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-user/media).
 
 ## Read and cancel
 

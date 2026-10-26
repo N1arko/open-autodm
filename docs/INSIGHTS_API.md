@@ -18,6 +18,7 @@ Internal account UUIDs come from `GET /api/instagram/accounts`.
 | ------------------------------------------------------------------ | ---------------------------------------------------------------- |
 | `GET /api/v1/accounts/{id}/insights?from=YYYY-MM-DD&to=YYYY-MM-DD` | Windowed account totals and current follower/media counts        |
 | `GET /api/v1/accounts/{id}/media?limit=25&after={cursor}`          | Owned media IDs, types, timestamps and permalinks; `next_cursor` |
+| `GET /api/v1/accounts/{id}/stories?limit=25&after={cursor}`        | Active Stories: IDs, types, timestamps; `next_cursor`, no permanent links |
 | `GET /api/v1/accounts/{id}/media/{mediaId}/insights`               | Lifetime post/Reel metrics and metadata                          |
 | `GET /api/v1/accounts/{id}/insights/audience`                      | Aggregate audience breakdown                                     |
 | `GET /api/v1/accounts/{id}/insights/history`                       | Stored observations, 50 per page, `next_cursor`                  |
