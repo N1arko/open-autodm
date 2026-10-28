@@ -90,3 +90,11 @@ curl --fail-with-body "$AUTODM_URL/api/instagram/accounts" \
 Read the current state before changing a binding. Store returned integration secrets before completing setup. Reuse the same `Idempotency-Key` when retrying an outgoing reply. Treat `202 queued` as acceptance into the queue; check its state to confirm delivery. A `delivery_unknown` result requires inspecting the actual conversation before another send.
 
 Advertising resource creation, durable rule-based optimization and credential monitoring: [ADS_AUTOMATION_API.md](ADS_AUTOMATION_API.md).
+
+## Instagram Agent API
+
+[INSTAGRAM_AGENT_API.md](INSTAGRAM_AGENT_API.md) — основной контракт повседневной работы
+с Instagram: свежие права/профиль, чтение медиа/Direct, комментарии и модерация, материалы,
+события и рецепт публикации с первым комментарием. Начните с
+`GET /api/v1/accounts/{id}/capabilities`, сохраните IDs операций и проверяйте receipts.
+Исторические задания и существующие комментарии автоматически не дополняются.

@@ -16,12 +16,15 @@ interface Publication {
   claim_token: string;
   status: string;
   account_id: string;
-  media_type: "REELS" | "CAROUSEL" | "STORIES";
+  media_type: "REELS" | "CAROUSEL" | "STORIES" | "IMAGE";
   video_url: string | null;
   image_url: string | null;
   items: PublicationItem[];
   child_container_ids: string[];
   cover_url: string | null;
+  alt_text?: string | null;
+  thumb_offset?: number | null;
+  is_ai_generated?: boolean | null;
   caption: string;
   share_to_feed: boolean;
   container_id: string | null;
@@ -58,6 +61,9 @@ async function run(
   });
   if (!context) return;
   const p = context.publication;
+  const options = { ...(p.alt_text != null ? { alt_text: p.alt_text } : {}),
+    ...(p.thumb_offset != null ? { thumb_offset: p.thumb_offset } : {}),
+    ...(p.is_ai_generated != null ? { is_ai_generated: p.is_ai_generated } : {}) };
   let token: string;
   try {
     token = decrypt(
@@ -110,13 +116,17 @@ async function run(
           await ports.validateVideo(item.url);
           container = await ports.meta.createItem(context.account.instagram_user_id, item, token);
         } else {
-          container = await ports.meta.createCarousel(context.account.instagram_user_id, children, p.caption, token);
+          container = await ports.meta.createCarousel(context.account.instagram_user_id, children, p.caption, token, options);
         }
       } else if (p.media_type === "STORIES") {
         urlError = p.video_url ? "invalid_video_url" : "invalid_image_url";
         await ports.validateVideo((p.video_url ?? p.image_url)!);
         container = await ports.meta.createStory(context.account.instagram_user_id,
-          p.video_url ? { video_url: p.video_url } : { image_url: p.image_url! }, token);
+          p.video_url ? { video_url: p.video_url } : { image_url: p.image_url! }, token, options);
+      } else if (p.media_type === "IMAGE") {
+        urlError = "invalid_image_url";
+        await ports.validateVideo(p.image_url!);
+        container = await ports.meta.createImage(context.account.instagram_user_id, p.image_url!, p.caption, token, options);
       } else {
         await ports.validateVideo(p.video_url!);
         if (p.cover_url) {
@@ -130,6 +140,7 @@ async function run(
           p.share_to_feed,
           token,
           p.cover_url ?? undefined,
+          options,
         );
       }
     } catch (error) {

@@ -6,6 +6,7 @@ Open-autoDM объединяет Direct, публикацию Reels, Instagram I
 
 | Задача | Контракт | Код |
 | --- | --- | --- |
+| Читать профиль/медиа/Direct, управлять комментариями, подготовить материалы и первый комментарий | [INSTAGRAM_AGENT_API.md](INSTAGRAM_AGENT_API.md) | `src/lib/engagement/`, `src/app/api/v1/accounts/`, `src/app/api/v1/instagram-operations/` |
 | Проверить настройки Meta, подключить Instagram, найти аккаунты и привязки | [AGENT_API.md](AGENT_API.md) | `src/lib/auth.ts`, `src/lib/ownerApiToken.ts`, `src/lib/instagram/`, `src/app/api/instagram/` |
 | Подключить любого внешнего бота, принимать события и отправлять ответы | [BOT_API.md](BOT_API.md) | `src/lib/transport/`, `src/app/api/v1/integrations/`, `src/app/api/v1/messages/` |
 | Опубликовать Reel, карусель или Story сейчас/по расписанию, проверить/отменить задание | [PUBLISHING_API.md](PUBLISHING_API.md) | `src/lib/publishing/`, `src/app/api/v1/publications/`, `src/app/api/v1/accounts/[id]/stories/` |
@@ -104,3 +105,12 @@ npm run build
 В одной задаче с изменением поведения обновляй код, соответствующий API-контракт и проверки. При изменении состава возможностей обновляй эту карту и README, при изменении запуска — DEPLOYMENT и `.env.example`. Локальные сведения доступа поддерживаются отдельно в `.local/AGENT_ACCESS.md`.
 
 Списки аккаунтов, действующие бюджеты, статусы токенов, кампаний и очередей получай через API. Разовые результаты сохраняй с датой/источником, когда это требуется задачей. Такая карта остаётся полезной при подключении новых аккаунтов, изменении разрешений и переносе сервиса.
+
+## Расширение Instagram Agent API
+
+Контракт [INSTAGRAM_AGENT_API.md](INSTAGRAM_AGENT_API.md) содержит датированную матрицу Meta,
+типизированные операции комментариев, receipts/сверку unknown, private uploads, живое чтение
+Direct и журнал событий. Права проверяются свежим `/accounts/{id}/capabilities`; наличие
+запрошенного OAuth scope не доказывает grant. Публикация с `first_comment` создаёт атомарную
+зависимость, завершение видно через `/publications/{id}/workflow`. Старые задания сохраняются
+без дополнений. Новые одиночные фото используют ту же очередь публикаций.

@@ -387,7 +387,7 @@ export async function checkUserFollowsBusiness(
  * Subscribes an IG account to webhook fields. Meta requires this per-account
  * call in addition to the app-level webhook URL - without it, NO events fire.
  */
-export const WEBHOOK_SUBSCRIBED_FIELDS = 'comments,messages,messaging_postbacks,message_reactions,message_edit';
+export const WEBHOOK_SUBSCRIBED_FIELDS = 'comments,mentions,messages,messaging_postbacks,message_reactions,message_edit';
 
 export async function subscribeToWebhookFields(igUserId: string, accessToken: string): Promise<{ ok: boolean; body: string }> {
   const params = new URLSearchParams({ subscribed_fields: WEBHOOK_SUBSCRIBED_FIELDS, access_token: accessToken });

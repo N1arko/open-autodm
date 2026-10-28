@@ -87,7 +87,7 @@ export async function databaseFixture() {
     async rpc<T>(name: string, args: Record<string, unknown> = {}) {
       const keys = Object.keys(args),
         values = Object.entries(args).map(([key, value]) =>
-          name === "publishing_enqueue" && key === "p_items" ? JSON.stringify(value) : value,
+          value !== null && typeof value === "object" ? JSON.stringify(value) : value,
         );
       const call = `public.${ident(name)}(${keys.map((k, i) => `${ident(k)}=>$${i + 1}`).join(",")})`;
       if (name === "transport_claim")
@@ -119,6 +119,7 @@ export function restFixture(
   pool: Pool,
   store: TransportStore,
   users: Record<string, string>,
+  storage?: (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<void>,
 ) {
   return createServer(async (req, res) => {
     try {
@@ -156,6 +157,7 @@ export function restFixture(
         json(res, await store.rpc(name, args));
         return;
       }
+      if (url.pathname.startsWith("/storage/v1/") && storage) { await storage(req,res,url);return; }
       const table = ident(url.pathname.split("/").at(-1)!);
       const values: unknown[] = [];
       const filters: string[] = [];

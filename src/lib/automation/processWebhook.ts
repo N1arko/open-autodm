@@ -14,6 +14,8 @@ import { createLogger } from '@/lib/logger';
 import { debugLog } from '@/lib/debugLog';
 import { keywordMatches } from '@/lib/automation/keywordMatch';
 import { enqueueJob } from '@/lib/automation/queue';
+import { transportStore } from '@/lib/transport/store';
+import { hash } from '@/lib/transport/api';
 import { routeBotDm } from '@/lib/transport/inbox';
 import { recordContactInteraction } from '@/lib/automation/contacts';
 import type {
@@ -50,7 +52,7 @@ export async function processWebhookPayload(body: MetaWebhookBody): Promise<numb
 
     const { data: igAccount, error } = await db
       .from('instagram_accounts')
-      .select('id, instagram_user_id')
+      .select('id, instagram_user_id, username')
       .eq('instagram_user_id', entry.id)
       .eq('is_active', true)
       .single();
@@ -66,7 +68,17 @@ export async function processWebhookPayload(body: MetaWebhookBody): Promise<numb
 
     if (entry.changes?.length) {
       for (const change of entry.changes) {
-        if (change.field === 'comments') {
+        if (['comments','mentions','live_comments'].includes(change.field) && change.value && typeof change.value==='object') {
+          const v=change.value as unknown as Record<string,unknown>;
+          const at=Number.isFinite(entry.time) && entry.time>0 && entry.time<8640000000000 ? new Date(entry.time*1000).toISOString() : new Date().toISOString();
+          await transportStore.rpc('instagram_record_event', {
+            p_account:igAccount.id,p_key:hash(JSON.stringify({field:change.field,value:v})),
+            p_field:change.field,p_payload:v,p_at:at,
+          });
+        }
+        if (change.field === 'comments' && change.value && typeof change.value.id==='string' &&
+            typeof change.value.text==='string' && change.value.from?.id && change.value.media?.id) {
+          if (change.value.from.username && change.value.from.username.toLowerCase()===String(igAccount.username).toLowerCase()) continue;
           enqueued += await processCommentEvent(igAccount.id as string, entry.id, change.value, entry.time);
         } else {
           debugLog('webhook', 'info', 'change_field_ignored', 'skipped', `Ignoring change field "${change.field}"`, {

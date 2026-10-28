@@ -512,7 +512,7 @@ test("headless owner token can publish while anonymous and direct SQL mutations 
 });
 test("connection loss and HTTP 500 after publish are uncertain and never automatically repeated", async () => {
   for (const failure of ["disconnect", "500"]) {
-    await db.pool.query("TRUNCATE instagram_publications");
+    await db.pool.query("TRUNCATE instagram_publications CASCADE");
     created = published = polls = 0;
     mode = failure;
     const id = await queued();

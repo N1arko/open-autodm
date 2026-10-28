@@ -11,6 +11,7 @@ export class PublishingMetaError extends Error {
 }
 // Publishing can take longer than a metadata read. Keep it inside the worker lease.
 export const PUBLISH_TIMEOUT_MS = 60_000;
+export type PublishingOptions = { alt_text?: string; thumb_offset?: number; is_ai_generated?: boolean };
 export interface PublishingMeta {
   create(
     account: string,
@@ -19,10 +20,12 @@ export interface PublishingMeta {
     feed: boolean,
     token: string,
     cover?: string,
+    options?: PublishingOptions,
   ): Promise<string>;
+  createImage(account: string, image: string, caption: string, token: string, options?: PublishingOptions): Promise<string>;
   createItem(account: string, item: PublicationItem, token: string): Promise<string>;
-  createCarousel(account: string, children: string[], caption: string, token: string): Promise<string>;
-  createStory(account: string, source: { video_url?: string; image_url?: string }, token: string): Promise<string>;
+  createCarousel(account: string, children: string[], caption: string, token: string, options?: PublishingOptions): Promise<string>;
+  createStory(account: string, source: { video_url?: string; image_url?: string }, token: string, options?: PublishingOptions): Promise<string>;
   status(container: string, token: string): Promise<string>;
   publish(account: string, container: string, token: string): Promise<string>;
   permalink(media: string, token: string): Promise<string>;
@@ -104,28 +107,34 @@ export function publishingMeta(
       throw new PublishingMetaError("meta_missing_id", true, publishing);
     return data.id;
   };
+  const optionsForm = (o: PublishingOptions = {}) => Object.fromEntries(Object.entries(o).map(([k,v])=>[k,String(v)]));
   return {
+    async createImage(account, image, caption, token, options) {
+      return id(await call(`${account}/media`, token, { image_url: image, caption, ...optionsForm(options) }));
+    },
     async createItem(account, item, token) {
       return id(await call(`${account}/media`, token, {
         is_carousel_item: "true",
+        ...(item.alt_text !== undefined ? { alt_text: item.alt_text } : {}),
         ...(item.media_type === "VIDEO"
           ? { media_type: "VIDEO", video_url: item.url }
           : { image_url: item.url }),
       }));
     },
-    async createCarousel(account, children, caption, token) {
+    async createCarousel(account, children, caption, token, options) {
       return id(await call(`${account}/media`, token, {
-        media_type: "CAROUSEL", children: children.join(","), caption,
+        media_type: "CAROUSEL", children: children.join(","), caption, ...optionsForm(options),
       }));
     },
-    async createStory(account, source, token) {
+    async createStory(account, source, token, options) {
       return id(await call(`${account}/media`, token, {
-        media_type: "STORIES", ...source,
+        media_type: "STORIES", ...source, ...optionsForm(options),
       }));
     },
-    async create(account, video, caption, feed, token, cover) {
+    async create(account, video, caption, feed, token, cover, options) {
       return id(
         await call(`${account}/media`, token, {
+          ...optionsForm(options),
           media_type: "REELS",
           video_url: video,
           caption,

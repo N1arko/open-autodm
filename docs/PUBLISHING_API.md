@@ -75,7 +75,7 @@ returns active Stories as `{data:[{id,media_type,timestamp}],next_cursor}`. The 
 and owner authorization match the existing media list; no Insights grant is needed for this list.
 
 This release uploads a Story photo/video. Native Reel-card reposts, link/poll stickers,
-profile pins and first comments are outside this endpoint. Reusing a Reel's source video
+profile pins and interactive stickers are outside this endpoint. Reusing a Reel's source video
 as a Story creates a separate Story upload.
 
 Every source URL is validated at enqueue and again immediately before Meta receives it.
@@ -122,3 +122,23 @@ An agent should translate the user's timezone into an explicit offset, submit on
 ## Validation
 
 `npm test`, `npm run test:integration`, `npm run typecheck`, `npm run build` cover real PostgreSQL migrations/RPCs, API ownership, scheduling, cancellation races, lease recovery, idempotency and HTTP-level fake Meta publishing. Those checks do not prove a live account grant or real Instagram publication; run a separate account-authorized pilot before relying on production publishing.
+
+## Instagram Agent extension (28 October 2026)
+
+Apply `20261028000001_instagram_agent.sql` before updating app and worker. Additional
+`media_type:"IMAGE"` publishes one JPEG via `image_url`, with optional `caption,alt_text`.
+`first_comment` creates an atomic dependent comment operation for IMAGE/REELS/CAROUSEL;
+`first_comment_operation_id` links its separate status and receipt. Existing jobs and replay
+hashes are preserved. `GET /publications/{id}/workflow` combines publication/comment state.
+A failed or unknown publication blocks its comment; a comment failure leaves the post published.
+
+Reels accept optional integer `thumb_offset` (milliseconds, 0–900000); `cover_url` takes
+priority at Meta. `is_ai_generated` is passed on the parent container; image carousel children
+accept `alt_text` (up to 1000 characters). Stories reject first comments and alt text.
+The response exposes these options and `revision`. `PATCH /publications/{id}` accepts
+`revision` with optional `caption,publish_at`, only while queued and unclaimed. The edit is
+atomic, increments revision and preserves the original enqueue hash. Read after a lost edit
+response before retrying. Source changes require cancellation and a new owner-authorized job.
+
+Private materials upload, typed comment operations, ownership checks, unknown reconciliation,
+limits and complete examples: [INSTAGRAM_AGENT_API.md](INSTAGRAM_AGENT_API.md).

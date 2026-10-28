@@ -108,6 +108,12 @@ export function apiRoute(fn: (request: Request) => Promise<Response>) {
       const status = (
         {
           not_found: 404,
+          account_unavailable: 409,
+          cannot_cancel: 409,
+          publication_edit_conflict: 409,
+          operation_not_reconcilable: 409,
+          operation_queue_full: 429,
+          material_limit: 429,
           idempotency_conflict: 409,
           conversation_paused: 409,
           window_closed: 409,

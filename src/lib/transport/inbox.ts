@@ -28,26 +28,21 @@ const messaging = z
       .optional(),
   })
   .passthrough();
-const change = z
-  .object({ field: z.string(), value: z.unknown() })
-  .passthrough()
-  .superRefine((value, ctx) => {
-    if (
-      value.field === "comments" &&
-      !z
-        .object({
-          id,
-          text: z.string(),
-          from: actor,
-          media: z.object({ id }).passthrough(),
-          timestamp: z.number().optional(),
-          parent_id: z.string().optional(),
-        })
-        .passthrough()
-        .safeParse(value.value).success
-    )
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid_comment" });
-  });
+const change = z.object({field:z.string(),value:z.unknown()}).passthrough();
+export function normalizeWebhook(value: unknown): unknown {
+ if(!value || typeof value!=="object" || !("entry" in value) || !Array.isArray(value.entry))return value;
+ return {...value,entry:value.entry.map((e: unknown)=>{
+  if(!e || typeof e!=="object")return e;
+  const entry=e as Record<string,unknown>;
+  const changes=Array.isArray(entry.changes)?entry.changes:typeof entry.field==="string"?[{field:entry.field,value:entry.value}]:undefined;
+  return {...entry,...(changes?{changes:changes.map((c:unknown)=>{
+   if(!c || typeof c!=="object")return c;
+   const change=c as Record<string,unknown>,v=change.value;
+   if(v && typeof v==="object" && "comment_id" in v && !("id" in v))return {...change,value:{...v,id:v.comment_id}};
+   return change;
+  })}:{})};
+ })};
+}
 export const webhookSchema = z
   .object({
     object: z.enum(["instagram", "page"]),
@@ -66,7 +61,7 @@ export const webhookSchema = z
   })
   .passthrough();
 export async function persistWebhook(rawBody: string) {
-  const body = webhookSchema.parse(JSON.parse(rawBody));
+  const body = webhookSchema.parse(normalizeWebhook(JSON.parse(rawBody)));
   return transportStore.rpc<string>("transport_store_webhook", {
     p_hash: hash(rawBody),
     p_body: body,

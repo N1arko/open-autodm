@@ -1,3 +1,4 @@
+import { drainInstagram } from "../src/lib/engagement/worker";
 import { monitorCredentials } from "../src/lib/ads/credentials";
 import { drainOptimization } from "../src/lib/ads/optimization";
 import { transportStore } from "../src/lib/transport/store";
@@ -70,6 +71,7 @@ async function main() {
     transportLoop(),
     legacyLoop(),
     publishingLoop(),
+    instagramLoop(),
     insightsLoop(),
     advertisingLoop(),
   ]);
@@ -120,4 +122,12 @@ async function advertisingLoop() {
     }
     if (!stopping) await sleep(2000);
   }
+}
+
+async function instagramLoop() {
+ while(!stopping) {
+  let claimed=0;
+  try {claimed=await drainInstagram();} catch {console.error(JSON.stringify({scope:"worker",error:"instagram_operations_unavailable"}));}
+  if(!stopping) await sleep(claimed?200:2000);
+ }
 }

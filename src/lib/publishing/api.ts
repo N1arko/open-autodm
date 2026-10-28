@@ -15,7 +15,7 @@ export { publicationSchema } from "./input";
 export { validateVideoUrl } from "./url";
 
 const visible =
-  "id,account_id,media_type,video_url,image_url,items,cover_url,caption,share_to_feed,publish_at,status,container_id,media_id,permalink,error_code,attempts,created_at,updated_at,published_at";
+  "id,account_id,media_type,video_url,image_url,items,cover_url,caption,alt_text,thumb_offset,is_ai_generated,first_comment,first_comment_operation_id,revision,share_to_feed,publish_at,status,container_id,media_id,permalink,error_code,attempts,created_at,updated_at,published_at";
 export function publicPublication(row: Record<string, unknown>) {
   return Object.fromEntries(visible.split(",").map((k) => [k, row[k]]));
 }
@@ -91,6 +91,10 @@ export const createPublication = apiRoute(async (request) => {
     p_kind: input.media_type ?? "REELS",
     p_image: input.image_url ?? null,
     p_items: input.items ?? [],
+    p_first_comment: input.first_comment ?? null,
+    p_options: { ...(input.alt_text !== undefined ? { alt_text: input.alt_text } : {}),
+      ...(input.thumb_offset !== undefined ? { thumb_offset: input.thumb_offset } : {}),
+      ...(input.is_ai_generated !== undefined ? { is_ai_generated: input.is_ai_generated } : {}) },
   });
   return respond(publicPublication(row), 202);
 });
@@ -144,3 +148,21 @@ export const cancelPublication = (id: string) =>
       ),
     );
   });
+
+/** Optimistic edit of a job which has never been claimed. The original enqueue hash stays stable. */
+export const editPublication = (id: string) => apiRoute(async request => {
+  const user = await owner(request);
+  if (!z.string().uuid().safeParse(id).success) throw new ApiError(400, "invalid_id");
+  const { jsonBody } = await import("@/lib/transport/api");
+  const patch = await jsonBody(request, z.object({
+    revision: z.number().int().min(0),
+    caption: z.string().max(2200).optional(),
+    publish_at: z.string().datetime({ offset: true }).optional(),
+  }).strict());
+  const at = patch.publish_at ? new Date(patch.publish_at).toISOString() : null;
+  if (at && Date.parse(at) > Date.now() + 366 * 86400000) throw new ApiError(400,"schedule_too_far");
+  return respond(publicPublication(await transportStore.rpc("publishing_edit", {
+    p_user: user, p_id: id, p_revision: patch.revision,
+    p_caption: patch.caption ?? null, p_at: at,
+  })));
+});

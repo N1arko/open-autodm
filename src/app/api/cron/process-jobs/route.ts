@@ -96,6 +96,7 @@ async function handle(request: Request): Promise<Response> {
   if (cleanupError) logger.warn({ err: cleanupError }, 'cleanup_old_rows failed');
 
   await db.rpc('transport_cleanup');
+  await db.rpc('instagram_event_cleanup');
   await db.rpc('insights_cleanup');
   const { error: imageCleanupError } = await db.rpc('ads_creative_cleanup');
   if (imageCleanupError) logger.warn({}, 'ads_creative_cleanup failed');

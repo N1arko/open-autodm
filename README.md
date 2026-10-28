@@ -199,3 +199,13 @@ See [LICENSE](LICENSE).
 Built with ❤️ by <a href="https://www.instagram.com/buildwharsha/"><b>@buildwharsha</b></a> - say hi on Instagram
 
 </div>
+
+## Instagram для ИИ-агента
+
+[Instagram Agent API](docs/INSTAGRAM_AGENT_API.md) добавляет профиль/права, отдельные медиа,
+пагинацию комментариев и ответов, создание/модерацию с постоянными receipts, живое чтение
+Direct, tagged media, журнал событий и подготовку материалов через приватное хранилище.
+Публикации поддерживают одиночное фото, alt text, кадр обложки и зависимый первый комментарий.
+Очередь сохраняет статусы `unknown` при неопределённом результате Meta и защищает от дублей.
+Текущий Instagram Login использует v26.0; ограничения Facebook Login и App Review описаны
+в матрице контракта. Выпуск требует `20261028000001_instagram_agent.sql` и обновления app/worker.
