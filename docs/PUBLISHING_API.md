@@ -1,11 +1,34 @@
 # Instagram publishing API
 
-An owner or authorized AI agent can publish Reels, ordered photo/video carousels and photo/video Stories, immediately or at a specified time. The API creates a durable job; Instagram downloads and processes the media. Video preparation and hosting are external to this service. Stories publishing requires a business account; actual grants and eligibility are checked by Meta.
+Владелец или его агент публикует обычные и пробные Reels, одиночные фото, карусели и Stories,
+сразу или по расписанию. Первый комментарий можно связать с успешной публикацией.
+API сохраняет задание, worker передаёт материалы Meta и проверяет результат.
+Доступ, выбор аккаунта и готовый сценарий — в [API владельца](AGENT_API.md).
+
+## Поля и сценарии публикации
+
+| Задача | Поля одного `POST /api/v1/publications` | Подробности |
+| --- | --- | --- |
+| Обычный Reel | `account_id,video_url`; `media_type` опускается либо `REELS` | [Создание](#create-a-publication) |
+| Пробный / тестовый / «скрытый» Reel | Те же поля и `trial_params:{graduation_strategy:MANUAL\|SS_PERFORMANCE}` | [Trial Reels](#пробные-reels-trial-reels) |
+| Одиночное фото | `media_type:IMAGE,image_url`; необязательный `alt_text` | [Фото и первый комментарий](#фото-обложка-и-первый-комментарий) |
+| Карусель | `media_type:CAROUSEL,items` с 2–20 IMAGE/VIDEO | [Карусели и Stories](#carousels-and-stories) |
+| Story | `media_type:STORIES` и ровно один из `image_url,video_url` | [Карусели и Stories](#carousels-and-stories) |
+| Расписание | Необязательный `publish_at` с `Z` или UTC offset | [Создание](#create-a-publication) |
+| Первый комментарий | Необязательный `first_comment` для REELS/IMAGE/CAROUSEL | [Сценарий с проверкой](AGENT_API.md#пробный-reel-по-расписанию-с-первым-комментарием) |
+| Обложка Reels / AI label | `cover_url` либо `thumb_offset`; `is_ai_generated` | [Параметры](#фото-обложка-и-первый-комментарий) |
+| Правка и отмена | PATCH с `revision` либо DELETE `/api/v1/publications/{id}` | [Правка и отмена](#read-and-cancel) |
+
+Каждый POST требует `Idempotency-Key`; один запрос создаёт одно задание. Пробный Reel
+является публикацией для неподписчиков. Полная цепочка до проверенного комментария
+читается через `GET /api/v1/publications/{id}/workflow`. Материалы доступны через
+[приватную загрузку API](INSTAGRAM_AGENT_API.md#материалы-через-api) либо HTTPS-хостинг владельца.
 
 ## Prerequisites
 
 - Apply all migrations, including `20261005000001_reel_publications.sql` and `20261006000001_reel_covers.sql`; run the VPS worker or the secured processing cron.
 - Apply `20261025000001_carousels_stories.sql` before deploying the app and worker that use the additional media types. Existing Reel rows, request hashes and enqueue RPC callers are preserved.
+- Apply `20261028000001_instagram_agent.sql` for IMAGE/first comments and `20261028000002_trial_reels.sql` for Trial Reels before updating app and worker. Deployment order: [DEPLOYMENT.md](DEPLOYMENT.md).
 - Add `instagram_business_content_publish` to the Meta app and obtain the account's consent for that permission. Generate the authorization URL using `GET /api/instagram/connect?publishing=true`; this adds publishing to the existing basic, messages and comments scopes. The default connection remains messaging only. Previously connected accounts need renewed consent. Meta access/review/publication requirements still apply.
 - Supply a direct, public HTTPS video URL (port 443), without embedded credentials or fragments. Private/reserved addresses are rejected independently of any internal bot webhook exceptions. The source must remain available when the scheduled job runs and until Instagram finishes processing it. An expiring signed URL must cover that whole interval.
 - The video must meet [Meta's Reels publishing requirements](https://www.postman.com/meta/workspace/instagram/documentation/23987686-9386f468-7714-490f-9bfc-9442db5c8f00). Provider validation errors appear on the job. This service does not inspect video codecs before submitting it.
@@ -95,6 +118,7 @@ Provider references: [publishing guide](https://developers.facebook.com/document
 | ---------------------------------------------------------- | ----------------------------------------------------- |
 | `GET /api/v1/publications/{id}`                            | Owner's job and current publishing result             |
 | `GET /api/v1/publications?account_id={UUID}&cursor={UUID}` | Up to 50 jobs, optional account filter, `next_cursor` |
+| `PATCH /api/v1/publications/{id}`                         | Edit caption/publish_at of an unclaimed queued job using its current revision |
 | `DELETE /api/v1/publications/{id}`                         | Cancel queued/processing job, preserving its record   |
 
 Cancellation is idempotent. Once the publish request has started (`publishing`), cancellation returns `409 cannot_cancel`. Cancelling a processing job can leave an unused Instagram container; the worker is fenced from publishing it. Published posts are not deleted by this endpoint. Foreign accounts/jobs return `404`, invalid or bot credentials return `401`, inactive/expired accounts return `409 account_unavailable` on creation. Instance outages return `503`.
@@ -123,7 +147,7 @@ An agent should translate the user's timezone into an explicit offset, submit on
 
 `npm test`, `npm run test:integration`, `npm run typecheck`, `npm run build` cover real PostgreSQL migrations/RPCs, API ownership, scheduling, cancellation races, lease recovery, idempotency and HTTP-level fake Meta publishing. Those checks do not prove a live account grant or real Instagram publication; run a separate account-authorized pilot before relying on production publishing.
 
-## Instagram Agent extension (28 October 2026)
+## Фото, обложка и первый комментарий
 
 Apply `20261028000001_instagram_agent.sql` before updating app and worker. Additional
 `media_type:"IMAGE"` publishes one JPEG via `image_url`, with optional `caption,alt_text`.

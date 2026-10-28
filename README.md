@@ -26,15 +26,17 @@ $25/month tools, and new features land here regularly. **Watch** the repo to cat
 
 ## Работа с этим форком
 
-Этот репозиторий `N1arko/open-autodm` содержит один сервис: Instagram Direct с внешними ботами, публикацию Reels, Instagram Insights и управление рекламой Meta. Для управления через ИИ-агента есть HTTP API владельца. Next.js приложение и постоянный worker используют общий Supabase.
+Этот репозиторий `N1arko/open-autodm` содержит один сервис: Instagram Direct, комментарии, обычные и пробные Reels, фото/карусели/Stories, Insights и рекламу Meta. Next.js приложение и постоянный worker используют Supabase. Старт агента — [API владельца](docs/AGENT_API.md): доступ, карта действий и готовый сценарий публикации с первым комментарием.
 
 **Новому чату:** начните с [AGENTS.md](AGENTS.md) и [карты проекта](docs/PROJECT_GUIDE.md). Локальное расположение доступа задаётся в исключённом из Git `.local/AGENT_ACCESS.md`. Состав подключённых аккаунтов, разрешения и состояние заданий проверяются через API.
 
 | Возможность | Документация |
 | --- | --- |
-| Управление без входа в панель | [API владельца](docs/AGENT_API.md) |
+| Старт агента: доступ, выбор аккаунта, сценарии и проверка результата | [API владельца](docs/AGENT_API.md) |
+| Профиль/медиа, комментарии, живой Direct, материалы и события | [Instagram Agent API](docs/INSTAGRAM_AGENT_API.md) |
 | Любые внешние обработчики Direct | [API ботов](docs/BOT_API.md) |
-| Reels, видео-карусели, Stories, расписание и обложки | [Публикации](docs/PUBLISHING_API.md) |
+| Reels, фото, карусели, Stories, расписание, обложка и первый комментарий | [Публикации](docs/PUBLISHING_API.md) |
+| Пробные / тестовые Reels с явной стратегией перехода | [Trial Reels](docs/PUBLISHING_API.md#пробные-reels-trial-reels) |
 | Статистика Instagram и наблюдения | [Insights](docs/INSIGHTS_API.md) |
 | Рекламные кабинеты и отчёты | [Чтение рекламы](docs/ADS_API.md) |
 | Рекламные подписки, посещения профиля, стоимость и дневная динамика | [Результаты рекламы](docs/ADS_REPORTING_API.md) |
@@ -199,16 +201,3 @@ See [LICENSE](LICENSE).
 Built with ❤️ by <a href="https://www.instagram.com/buildwharsha/"><b>@buildwharsha</b></a> - say hi on Instagram
 
 </div>
-
-## Instagram для ИИ-агента
-
-[Instagram Agent API](docs/INSTAGRAM_AGENT_API.md) добавляет профиль/права, отдельные медиа,
-пагинацию комментариев и ответов, создание/модерацию с постоянными receipts, живое чтение
-Direct, tagged media, журнал событий и подготовку материалов через приватное хранилище.
-Публикации поддерживают одиночное фото, alt text, кадр обложки и зависимый первый комментарий.
-Очередь сохраняет статусы `unknown` при неопределённом результате Meta и защищает от дублей.
-Текущий Instagram Login использует v26.0; ограничения Facebook Login и App Review описаны
-в матрице контракта. Выпуск требует `20261028000001_instagram_agent.sql` и обновления app/worker.
-
-Публикации также поддерживают [Trial Reels](docs/PUBLISHING_API.md#пробные-reels-trial-reels):
-явный ручной либо автоматический переход в обычный Reel, расписание и первый комментарий.

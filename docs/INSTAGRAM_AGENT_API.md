@@ -6,6 +6,25 @@
 конкретного бота. Внутренний account UUID получайте через `GET /api/instagram/accounts`.
 Каждый запрос проверяет владельца. Graph ID публикации, комментария и ID задания — разные сущности.
 
+## Короткий маршрут
+
+Доступ и выбор аккаунта описаны в [начале API владельца](AGENT_API.md#начало-работы).
+[Готовый сценарий](AGENT_API.md#пробный-reel-по-расписанию-с-первым-комментарием) объединяет
+Trial Reels, расписание и первый комментарий. Детальный контракт полей публикации —
+[PUBLISHING_API.md](PUBLISHING_API.md#поля-и-сценарии-публикации).
+
+| Задача | Раздел |
+| --- | --- |
+| Свой опубликованный пост: комментарий, ответ или модерация | [Операции комментариев](#постоянные-операции-комментариев) |
+| Новое медиа и зависимый первый комментарий | [Публикация с комментарием](#публикация--первый-комментарий) |
+| Пробный / тестовый Reel | [Trial Reels](PUBLISHING_API.md#пробные-reels-trial-reels) |
+| Загрузка фото/видео и получение URL для Meta | [Материалы](#материалы-через-api) |
+| Живой Direct и события | [События и Direct](#события-и-direct) |
+| Права, профиль, медиа, Stories и tagged media | [Чтение объектов](#чтение-и-доступные-действия) |
+
+В таблицах ниже указаны полные пути `/api/v1/…`. Матрица возможностей отделяет
+реализованные операции от дополнительных возможностей Meta и их требований к доступу.
+
 ## Матрица возможностей на 28 октября 2026
 
 Проверены код и официальные страницы Meta, обновлённые в том числе 20 октября 2026.
@@ -16,8 +35,9 @@ Instagram-модули используют **Instagram Login, graph.instagram.c
 | Статус | Возможность | Доступ и граница |
 | --- | --- | --- |
 | Уже реализовано | Direct-боты, асинхронные ответы, Reels/карусели/Stories с расписанием, Insights/снимки, Ads | Переиспользуются существующие контракты |
-| Meta поддерживает; добавлено | Профиль, grants, подписки, отдельное медиа, дети карусели, лимит публикаций, tagged media | `instagram_business_basic`; некоторые поля/edges требуют дополнительных grants |
+| Meta поддерживает; добавлено | Профиль, проверка доступности grants, подписки, отдельное медиа, дети карусели, лимит публикаций, tagged media | `instagram_business_basic`; некоторые поля/edges требуют дополнительных grants |
 | Meta поддерживает; добавлено | Комментарии с пагинацией, первый комментарий, ответы, скрытие/возврат, удаление комментария, включение/выключение комментариев | Свои медиа; `instagram_business_manage_comments`; live-видео исключены из write-сценариев |
+| Meta поддерживает; добавлено | Trial Reels с `MANUAL` или `SS_PERFORMANCE`, расписанием и первым комментарием | `instagram_business_content_publish`; стратегия явная, доступность аккаунта определяет Meta |
 | Meta поддерживает; добавлено | IMAGE, alt text одиночного фото/фото-слайда, `thumb_offset`, `is_ai_generated` | `instagram_business_content_publish`; JPEG до 8 MiB; Stories только для Business |
 | Добавлено в сервис | Редактирование caption/времени ещё не начатого задания; загрузка материалов; публикация → первый комментарий → проверка | Очередь, постоянные операции, receipts, изоляция владельцев |
 | Meta поддерживает; добавлено | Живые разговоры Direct и детали сообщений; история нашего транспорта | `instagram_business_manage_messages`; детали последних 20 сообщений; ограничения папки Requests |
@@ -28,7 +48,7 @@ Instagram-модули используют **Instagram Login, graph.instagram.c
 | Официальный текущий контракт не предоставляет | Изменение caption/файла/обложки уже опубликованного медиа, нативный Reel-card репост в Story, link/poll/location stickers Stories, управление highlights, profile pins | Эти действия отсутствуют в API сервиса |
 | Вне текущей схемы доступа | Произвольные комментарии под чужими постами, follow/unfollow, произвольные действия consumer-аккаунта | Доступные внешние @mentions имеют отдельный официальный сценарий; обходов авторизации нет |
 
-Права ниже — требования. Реальную выдачу проверяйте `/capabilities`. Запрошенные OAuth
+Права ниже — требования. Результат проверки доступен в `GET /api/v1/accounts/{id}/capabilities`. Запрошенные OAuth
 scopes и успешные локальные проверки не подтверждают grant. Standard Access применяется
 к управляемым аккаунтам с ролью в приложении; для внешних клиентов нужны соответствующий
 Advanced Access/App Review, а иногда Business Verification. Статус App Review по токену
@@ -46,22 +66,22 @@ Advanced Access/App Review, а иногда Business Verification. Статус 
 
 ## Чтение и доступные действия
 
-Все пути ниже начинаются с `/api/v1`. Ответы не кешируются. Наблюдения содержат
+Ниже приведены полные пути HTTP API. Ответы не кешируются. Наблюдения содержат
 `fetched_at`, где уместно; счётчики/поля, которых Meta не вернула, остаются отсутствующими.
 
 | Метод и путь | Результат |
 | --- | --- |
-| `GET /accounts/{id}/profile` | Свежий профиль, тип аккаунта, доступные счётчики |
-| `GET /accounts/{id}/capabilities` | Текущие grants, подписки, поддерживаемые действия и ограничения |
-| `GET /accounts/{id}/media` | Список медиа; существующий [Insights API](INSIGHTS_API.md) |
-| `GET /accounts/{id}/media/{mediaId}` | Подпись, тип, ссылки и доступные счётчики; сначала подтверждается owner |
-| `GET /accounts/{id}/media/{mediaId}/children` | Слайды карусели с пагинацией |
-| `GET /accounts/{id}/stories` | Активные Stories; история заданий хранится отдельно |
-| `GET /accounts/{id}/tags` | Медиа, в которых аккаунт отмечен; права на модерацию чужого медиа этим не выдаются |
-| `GET /accounts/{id}/publishing-limit` | Свежий `quota_usage`/`config` Meta; значения лимита не фиксируются в клиенте |
-| `GET /accounts/{id}/media/{mediaId}/comments` | Верхние комментарии |
-| `GET /accounts/{id}/media/{mediaId}/comments/{commentId}` | Один комментарий с проверкой связи с медиа |
-| `GET /accounts/{id}/media/{mediaId}/comments/{commentId}/replies` | Ответы на комментарий |
+| `GET /api/v1/accounts/{id}/profile` | Свежий профиль, тип аккаунта, доступные счётчики |
+| `GET /api/v1/accounts/{id}/capabilities` | Наблюдаемые grants, подписки, поддерживаемые действия и ограничения; возможен unknown |
+| `GET /api/v1/accounts/{id}/media` | Список медиа; существующий [Insights API](INSIGHTS_API.md) |
+| `GET /api/v1/accounts/{id}/media/{mediaId}` | Подпись, тип, ссылки и доступные счётчики; сначала подтверждается owner |
+| `GET /api/v1/accounts/{id}/media/{mediaId}/children` | Слайды карусели с пагинацией |
+| `GET /api/v1/accounts/{id}/stories` | Активные Stories; история заданий хранится отдельно |
+| `GET /api/v1/accounts/{id}/tags` | Медиа, в которых аккаунт отмечен; права на модерацию чужого медиа этим не выдаются |
+| `GET /api/v1/accounts/{id}/publishing-limit` | Свежий `quota_usage`/`config` Meta; значения лимита не фиксируются в клиенте |
+| `GET /api/v1/accounts/{id}/media/{mediaId}/comments` | Верхние комментарии |
+| `GET /api/v1/accounts/{id}/media/{mediaId}/comments/{commentId}` | Один комментарий с проверкой связи с медиа |
+| `GET /api/v1/accounts/{id}/media/{mediaId}/comments/{commentId}/replies` | Ответы на комментарий |
 
 Graph-списки используют `limit=1..50` (по умолчанию 25) и `after={opaque cursor}`.
 Следуйте `next_cursor` до null; ссылки `paging.next` провайдера не передаются клиенту и
@@ -79,22 +99,22 @@ publishing, messages, insights. При сбое проверки grants знач
 
 ## Постоянные операции комментариев
 
-`POST /accounts/{id}/operations`, JSON, обязательный `Idempotency-Key` (1–128 символов
+`POST /api/v1/accounts/{id}/operations`, JSON, обязательный `Idempotency-Key` (1–128 символов
 `A-Za-z0-9_.:-`). Поддерживаются ровно следующие формы:
 
-```json
-{"action":"comment.create","media_id":"<Graph media ID>","text":"Первый комментарий"}
-{"action":"comment.reply","media_id":"<Graph media ID>","comment_id":"<Graph comment ID>","text":"Спасибо!"}
-{"action":"comment.hide","media_id":"<Graph media ID>","comment_id":"<Graph comment ID>","hidden":true}
-{"action":"comment.delete","media_id":"<Graph media ID>","comment_id":"<Graph comment ID>"}
-{"action":"media.comments","media_id":"<Graph media ID>","enabled":false}
-```
+| Действие | Тело одного JSON-запроса |
+| --- | --- |
+| Создать комментарий | `{"action":"comment.create","media_id":"<Graph media ID>","text":"Первый комментарий"}` |
+| Ответить | `{"action":"comment.reply","media_id":"<Graph media ID>","comment_id":"<Graph comment ID>","text":"Спасибо!"}` |
+| Скрыть | `{"action":"comment.hide","media_id":"<Graph media ID>","comment_id":"<Graph comment ID>","hidden":true}` |
+| Удалить комментарий | `{"action":"comment.delete","media_id":"<Graph media ID>","comment_id":"<Graph comment ID>"}` |
+| Выключить комментарии | `{"action":"media.comments","media_id":"<Graph media ID>","enabled":false}` |
 
 Для возврата комментария задайте `hidden:false`, для включения — `enabled:true`.
 Текст допускает до 2200 символов. Валидация неизвестных полей/действий возвращает `400`.
-Удобные POST-алиасы `/media/{mediaId}/comments` и
-`/media/{mediaId}/comments/{commentId}/replies` принимают только `{"text":"…"}` и тот же
-заголовок идемпотентности. Их ключи общие с `/operations`.
+Удобные POST-алиасы `/api/v1/accounts/{id}/media/{mediaId}/comments` и
+`/api/v1/accounts/{id}/media/{mediaId}/comments/{commentId}/replies` принимают только `{"text":"…"}` и тот же
+заголовок идемпотентности. Их ключи общие с `/api/v1/accounts/{id}/operations`.
 
 Ответ `202` содержит `id,account_id,action,input,status,receipt,error_code,attempts` и даты.
 Состояние `queued` подтверждает сохранение. Worker перед внешним изменением проверяет
@@ -104,11 +124,11 @@ publishing, messages, insights. При сбое проверки grants знач
 
 | Метод и путь | Назначение |
 | --- | --- |
-| `POST /accounts/{id}/operations/validate` | Тот же JSON; проверка формы, владения и наблюдаемых grants. Внешнего write нет. Meta dry-run комментариев не предоставляет |
-| `GET /accounts/{id}/operations?cursor={UUID}` | 50 операций, `next_cursor` |
-| `GET /instagram-operations/{operationId}` | Постоянный статус и receipt |
-| `DELETE /instagram-operations/{operationId}` | Отмена `queued/preparing`; `executing` и завершённые дают `409` |
-| `POST /instagram-operations/{operationId}/reconcile` | Повторное чтение результата; внешнего write нет |
+| `POST /api/v1/accounts/{id}/operations/validate` | Тот же JSON; проверка формы, владения и наблюдаемых grants. Внешнего write нет. Meta dry-run комментариев не предоставляет |
+| `GET /api/v1/accounts/{id}/operations?cursor={UUID}` | 50 операций, `next_cursor` |
+| `GET /api/v1/instagram-operations/{operationId}` | Постоянный статус и receipt |
+| `DELETE /api/v1/instagram-operations/{operationId}` | Отмена `queued/preparing`; `executing` и завершённые дают `409` |
+| `POST /api/v1/instagram-operations/{operationId}/reconcile` | Повторное чтение результата; внешнего write нет |
 
 Состояния: `queued → preparing → executing → succeeded/failed/unknown`; возможна отмена
 до `executing`. Известные временные/429 отказы возвращаются в очередь с backoff, максимум
@@ -124,7 +144,8 @@ publishing, messages, insights. При сбое проверки grants знач
 отсутствия не подменяется выводом по общему provider error. Meta всегда показывает
 собственные комментарии владельца даже после `hide=true` — учитывайте `verified`.
 
-Для сверки успешной операции отправьте `{}` в `/reconcile`. Для неизвестного создания
+Для сверки успешной операции отправьте `{}` в
+`POST /api/v1/instagram-operations/{operationId}/reconcile`. Для неизвестного создания
 сначала найдите комментарий через GET с пагинацией, затем передайте
 `{"external_id":"<comment ID>"}`. Сервер проверит своё медиа, текст, parent, автора по
 username аккаунта и время после начала операции. Это явное принятие найденного результата.
@@ -133,7 +154,7 @@ username аккаунта и время после начала операции
 
 ## Публикация → первый комментарий
 
-Существующий `POST /publications` принимает необязательный `first_comment`:
+Существующий `POST /api/v1/publications` принимает необязательный `first_comment`:
 
 ```json
 {
@@ -152,7 +173,7 @@ username аккаунта и время после начала операции
 `publication_unknown` публикации блокируют зависимый комментарий. Исторические задания
 и повторы их enqueue не получают новых комментариев.
 
-`GET /publications/{id}/workflow` объединяет публикацию и операцию. `state`:
+`GET /api/v1/publications/{id}/workflow` объединяет публикацию и операцию. `state`:
 `waiting_publication`, `waiting_comment`, `verification_pending`, `completed`, `needs_attention`.
 Для `completed` с комментарием нужен `verified:true`. Это типизированный рецепт с постоянной
 зависимостью; произвольного Graph proxy, произвольного кода и передачи Meta-токенов нет.
@@ -166,7 +187,7 @@ username аккаунта и время после начала операции
 Все URL проходят существующую SSRF-проверку при enqueue и перед передачей Meta.
 Stories не принимают первый комментарий, caption и alt text.
 
-`PATCH /publications/{id}` принимает `{"revision":0,"caption":"…","publish_at":"…"}`.
+`PATCH /api/v1/publications/{id}` принимает `{"revision":0,"caption":"…","publish_at":"…"}`.
 Это атомарная правка `queued` без активного claim; stale revision и начатое задание дают
 `409 publication_edit_conflict`. Версия увеличивается; первоначальные enqueue key/hash
 сохраняются, повтор enqueue возвращает текущее задание. После потерянного ответа PATCH
@@ -177,16 +198,16 @@ Stories не принимают первый комментарий, caption и 
 
 ## Материалы через API
 
-1. `POST /accounts/{id}/materials`, `Idempotency-Key`, JSON
+1. `POST /api/v1/accounts/{id}/materials`, `Idempotency-Key`, JSON
    `{"mime":"video/mp4","size":12345678}`. JPEG до 8 MiB; MP4/MOV до 300 MiB.
 2. Ответ содержит ID материала и `upload_url` на 2 часа, `upload_method:"PUT"`.
    Передайте **байты файла** по этому адресу с указанным `Content-Type`. Заголовок
    владельца и Meta-токен этому запросу не нужны. Хранилище приватное, перезапись отключена.
-3. `POST /materials/{id}/complete` сверяет размер и MIME объекта; при несовпадении — `409`.
-4. `GET /materials/{id}?expires_in=604800` выдаёт URL для Meta и `expires_at`.
+3. `POST /api/v1/materials/{id}/complete` сверяет размер и MIME объекта; при несовпадении — `409`.
+4. `GET /api/v1/materials/{id}?expires_in=604800` выдаёт URL для Meta и `expires_at`.
    Допустимо 3600..604800 секунд (по умолчанию 7 дней). Подставьте URL в `video_url`,
    `image_url`, `cover_url` либо `items[].url`. Запас должен покрывать расписание и обработку.
-5. `GET /accounts/{id}/materials?cursor={UUID}` возвращает библиотеку, 50 записей/страницу.
+5. `GET /api/v1/accounts/{id}/materials?cursor={UUID}` возвращает библиотеку, 50 записей/страницу.
 
 Повтор POST с тем же payload/key возвращает тот же объект и при необходимости новый
 upload URL; другой payload даёт `409`. Одновременно разрешено 20 pending материалов на
@@ -199,7 +220,7 @@ bucket нет, чтобы не повредить ожидающие публи�
 
 ## События и Direct
 
-`GET /accounts/{id}/events?after=0&limit=50` возвращает последовательный журнал
+`GET /api/v1/accounts/{id}/events?after=0&limit=50` возвращает последовательный журнал
 `comments,mentions,live_comments`: `id,field,payload,occurred_at,received_at`.
 `limit=1..100`, `next_cursor` показывает следующую страницу, `last_cursor` сохраняйте для
 следующего опроса даже при `next_cursor:null`. События дедуплицируются и хранятся 30 дней.
@@ -216,8 +237,8 @@ bucket нет, чтобы не повредить ожидающие публи�
 
 Живой Direct:
 
-- `GET /accounts/{id}/inbox/conversations?limit=25&after={cursor}` — разговоры Meta;
-- `GET /accounts/{id}/inbox/conversations/{conversationId}/messages?limit=20&after={cursor}` —
+- `GET /api/v1/accounts/{id}/inbox/conversations?limit=25&after={cursor}` — разговоры Meta;
+- `GET /api/v1/accounts/{id}/inbox/conversations/{conversationId}/messages?limit=20&after={cursor}` —
   ID сообщений и доступные детали. Проверяется участие своего аккаунта. Graph conversation
   ID непрозрачный, он отличается от UUID разговора нашего транспорта.
 
@@ -227,8 +248,8 @@ Meta возвращает детали последних 20 сообщений;
 официальный Direct inbox без запуска AI-ответов.
 
 Сохранённый транспорт:
-`GET /accounts/{id}/conversations?cursor={UUID}` и
-`GET /conversations/{conversationUUID}/messages?cursor={UUID}` — 50 записей/страницу;
+`GET /api/v1/accounts/{id}/conversations?cursor={UUID}` и
+`GET /api/v1/conversations/{conversationUUID}/messages?cursor={UUID}` — 50 записей/страницу;
 `coverage:stored_bot_transport_only`. Для хронологии сортируйте `occurred_at`.
 Ответы бота, причинность, окно доставки и неизвестный результат сохраняют
 [BOT_API.md](BOT_API.md). Общего импорта всей истории в базу и произвольной отправки
