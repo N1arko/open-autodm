@@ -683,3 +683,84 @@ test("expired containers, account circuit breaker and missing publishing permiss
   assert.equal((await row(next)).status, "failed");
   assert.equal((await row(next)).error_code, "meta_http_403_code_10");
 });
+
+test("scheduled Trial Reels persist both strategies and reach Meta once with stable idempotency", async () => {
+  mode = "formats";
+  for (const graduation_strategy of ["MANUAL", "SS_PERFORMANCE"]) {
+    const trial_params = { graduation_strategy };
+    const publish_at = new Date(Date.now() + 3600_000).toISOString();
+    const payload = { trial_params, publish_at };
+    const id = await queued(payload, graduation_strategy);
+    assert.deepEqual((await row(id)).trial_params, trial_params);
+    assert.equal(await drainPublications(db.store, ports()), 0);
+    assert.equal((await createPublication(req("POST", input(payload), "owner-token", graduation_strategy))).status, 202);
+    assert.equal((await createPublication(req("POST", input({ ...payload, trial_params: { graduation_strategy: graduation_strategy === "MANUAL" ? "SS_PERFORMANCE" : "MANUAL" } }), "owner-token", graduation_strategy))).status, 409);
+    assert.equal((await createPublication(req("POST", input({ publish_at }), "owner-token", graduation_strategy))).status, 409);
+    await db.pool.query("UPDATE instagram_publications SET publish_at=now(),next_attempt_at=now() WHERE id=$1", [id]);
+    for (let n = 0; n < 4; n++) await tick();
+    const result = await (await getPublication(id)(req("GET"))).json();
+    assert.equal(result.status, "published");
+    assert.deepEqual(result.trial_params, trial_params);
+    assert.equal((await getPublication(id)(req("GET", undefined, "other-token"))).status, 404);
+    assert.deepEqual(JSON.parse(formatForms.at(-1)!.get("trial_params")!), trial_params);
+  }
+  assert.equal(published, 2);
+  assert.equal(created, 2);
+});
+
+test("ordinary jobs retain null trial settings and old enqueue callers stay compatible", async () => {
+  mode = "formats";
+  const id = await queued();
+  for (let n = 0; n < 4; n++) await tick();
+  assert.equal((await row(id)).status, "published");
+  assert.equal((await row(id)).trial_params, null);
+  assert.equal(formatForms[0]!.has("trial_params"), false);
+  const legacy = await db.pool.query("SELECT publishing_enqueue($1,$2,$3,$4,$5,$6,$7,$8) AS job", [owner, account, video, "Legacy", true, null, "legacy-trial-migration", "legacy-hash"]);
+  assert.equal(legacy.rows[0].job.trial_params, null);
+});
+
+test("trial validation fails before enqueue and SQL constraints reject malformed or incompatible modes", async () => {
+  for (const payload of [
+    input({ trial_params: {} }), input({ trial_params: null }), input({ trial_params: { graduation_strategy: "AUTO" } }),
+    input({ media_type: "STORIES", caption: "", trial_params: { graduation_strategy: "MANUAL" } }),
+    { account_id: account, media_type: "IMAGE", image_url: "https://8.8.8.8/photo.jpg", trial_params: { graduation_strategy: "MANUAL" } },
+  ]) assert.equal((await createPublication(req("POST", payload))).status, 400);
+  const id = await queued();
+  for (const invalid of [{}, { graduation_strategy: null }, { graduation_strategy: "AUTO" }, { graduation_strategy: "MANUAL", extra: true }]) {
+    await assert.rejects(db.pool.query("UPDATE instagram_publications SET trial_params=$2 WHERE id=$1", [id, invalid]), /publication_trial_params/);
+  }
+  await assert.rejects(db.pool.query("UPDATE instagram_publications SET media_type='STORIES',caption='',trial_params=$2 WHERE id=$1", [id, { graduation_strategy: "MANUAL" }]), /publication_trial_params/);
+  assert.equal((await row(id)).trial_params, null);
+  assert.equal(created, 0);
+});
+
+test("uncertain Trial Reel publication retains its mode and is never automatically resubmitted", async () => {
+  mode = "formats";
+  const trial_params = { graduation_strategy: "SS_PERFORMANCE" };
+  const id = await queued({ trial_params });
+  await tick();
+  const meta = ports().meta;
+  await tick(db.store, { meta: { ...meta, publish: async () => {
+    published++;
+    throw new PublishingMetaError("meta_http_500_code_2", true, true);
+  } } });
+  assert.equal((await row(id)).status, "publication_unknown");
+  assert.deepEqual((await row(id)).trial_params, trial_params);
+  assert.equal(await tick(), 0);
+  assert.equal(published, 1);
+});
+
+test("Trial Reel keeps the first-comment dependency bound to its confirmed media ID", async () => {
+  mode = "formats";
+  const id = await queued({ trial_params: { graduation_strategy: "MANUAL" }, first_comment: "After the Trial Reel publishes" });
+  const publication = await row(id);
+  assert.equal((await db.pool.query("SELECT status FROM instagram_operations WHERE id=$1", [publication.first_comment_operation_id])).rows[0].status, "queued");
+  assert.deepEqual(await db.store.rpc("instagram_claim", { p_limit: 4 }), []);
+  for (let n = 0; n < 4; n++) await tick();
+  const operations = await db.store.rpc<Record<string, unknown>[]>("instagram_claim", { p_limit: 4 });
+  assert.equal(operations.length, 1);
+  assert.equal(operations[0]!.id, publication.first_comment_operation_id);
+  assert.equal((operations[0]!.input as { media_id: string }).media_id, "123456");
+  assert.equal(await queued({ trial_params: { graduation_strategy: "MANUAL" }, first_comment: "After the Trial Reel publishes" }), id);
+  assert.equal((await db.pool.query("SELECT count(*) FROM instagram_operations WHERE publication_id=$1", [id])).rows[0].count, "1");
+});

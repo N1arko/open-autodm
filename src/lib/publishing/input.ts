@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 const mediaUrl = z.string().url().max(4096);
+export const trialParamsSchema = z.object({
+  graduation_strategy: z.enum(["MANUAL", "SS_PERFORMANCE"]),
+}).strict();
+export type TrialParams = z.infer<typeof trialParamsSchema>;
 export const publicationItemSchema = z.object({
   media_type: z.enum(["IMAGE", "VIDEO"]),
   url: mediaUrl,
@@ -18,6 +22,7 @@ export const publicationSchema = z.object({
   alt_text: z.string().max(1000).optional(),
   thumb_offset: z.number().int().min(0).max(900000).optional(),
   is_ai_generated: z.boolean().optional(),
+  trial_params: trialParamsSchema.optional(),
   publish_at: z.string().datetime({ offset: true }).optional(),
   media_type: z.enum(["REELS", "CAROUSEL", "STORIES", "IMAGE"]).optional(),
   image_url: mediaUrl.optional(),
@@ -33,6 +38,7 @@ export const publicationSchema = z.object({
       : Number(!!p.video_url) + Number(!!p.image_url) !== 1 ||
         !!p.items || !!p.cover_url || p.caption !== "";
   if ((kind !== "REELS" && p.thumb_offset !== undefined) ||
+      (kind !== "REELS" && p.trial_params !== undefined) ||
       (kind !== "IMAGE" && p.alt_text !== undefined) ||
       (kind === "STORIES" && p.first_comment !== undefined) ||
       p.items?.some(i => i.media_type !== "IMAGE" && i.alt_text !== undefined))

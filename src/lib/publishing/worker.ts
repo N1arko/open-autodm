@@ -3,7 +3,7 @@ import { getEnv } from "@/lib/env";
 import { createLogger } from "@/lib/logger";
 import { transportStore, type TransportStore } from "@/lib/transport/store";
 import { validateVideoUrl } from "./url";
-import type { PublicationItem } from "./input";
+import type { PublicationItem, TrialParams } from "./input";
 import {
   PublishingMetaError,
   PUBLISH_TIMEOUT_MS,
@@ -25,6 +25,7 @@ interface Publication {
   alt_text?: string | null;
   thumb_offset?: number | null;
   is_ai_generated?: boolean | null;
+  trial_params?: TrialParams | null;
   caption: string;
   share_to_feed: boolean;
   container_id: string | null;
@@ -63,7 +64,8 @@ async function run(
   const p = context.publication;
   const options = { ...(p.alt_text != null ? { alt_text: p.alt_text } : {}),
     ...(p.thumb_offset != null ? { thumb_offset: p.thumb_offset } : {}),
-    ...(p.is_ai_generated != null ? { is_ai_generated: p.is_ai_generated } : {}) };
+    ...(p.is_ai_generated != null ? { is_ai_generated: p.is_ai_generated } : {}),
+    ...(p.trial_params != null ? { trial_params: p.trial_params } : {}) };
   let token: string;
   try {
     token = decrypt(

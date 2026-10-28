@@ -114,3 +114,8 @@ Direct и журнал событий. Права проверяются све�
 запрошенного OAuth scope не доказывает grant. Публикация с `first_comment` создаёт атомарную
 зависимость, завершение видно через `/publications/{id}/workflow`. Старые задания сохраняются
 без дополнений. Новые одиночные фото используют ту же очередь публикаций.
+
+Пробные Reels создаются тем же `POST /api/v1/publications` с
+`trial_params.graduation_strategy=MANUAL|SS_PERFORMANCE`. Читайте
+[контракт Trial Reels](PUBLISHING_API.md#пробные-reels-trial-reels); текущие задания
+сохраняют прежний режим. Допустимость конкретного аккаунта определяет Meta.

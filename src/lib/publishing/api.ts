@@ -15,7 +15,7 @@ export { publicationSchema } from "./input";
 export { validateVideoUrl } from "./url";
 
 const visible =
-  "id,account_id,media_type,video_url,image_url,items,cover_url,caption,alt_text,thumb_offset,is_ai_generated,first_comment,first_comment_operation_id,revision,share_to_feed,publish_at,status,container_id,media_id,permalink,error_code,attempts,created_at,updated_at,published_at";
+  "id,account_id,media_type,video_url,image_url,items,cover_url,caption,alt_text,thumb_offset,is_ai_generated,trial_params,first_comment,first_comment_operation_id,revision,share_to_feed,publish_at,status,container_id,media_id,permalink,error_code,attempts,created_at,updated_at,published_at";
 export function publicPublication(row: Record<string, unknown>) {
   return Object.fromEntries(visible.split(",").map((k) => [k, row[k]]));
 }
@@ -94,7 +94,8 @@ export const createPublication = apiRoute(async (request) => {
     p_first_comment: input.first_comment ?? null,
     p_options: { ...(input.alt_text !== undefined ? { alt_text: input.alt_text } : {}),
       ...(input.thumb_offset !== undefined ? { thumb_offset: input.thumb_offset } : {}),
-      ...(input.is_ai_generated !== undefined ? { is_ai_generated: input.is_ai_generated } : {}) },
+      ...(input.is_ai_generated !== undefined ? { is_ai_generated: input.is_ai_generated } : {}),
+      ...(input.trial_params !== undefined ? { trial_params: input.trial_params } : {}) },
   });
   return respond(publicPublication(row), 202);
 });

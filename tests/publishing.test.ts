@@ -149,3 +149,41 @@ test("publish acknowledgement must be a media ID; malformed results and provider
       !error.uncertain,
   );
 });
+
+test("Trial Reels require an explicit strategy, only apply to Reels and preserve ordinary hashes", () => {
+  const account_id = "11111111-1111-4111-8111-111111111111";
+  const video_url = "https://8.8.8.8/video.mp4";
+  const ordinary = publicationSchema.parse({ account_id, video_url });
+  const ordinaryHash = publicationHashInput(ordinary, null);
+  const hashes = new Set([ordinaryHash]);
+  for (const graduation_strategy of ["MANUAL", "SS_PERFORMANCE"]) {
+    const input = publicationSchema.parse({ account_id, video_url, trial_params: { graduation_strategy } });
+    assert.deepEqual(input.trial_params, { graduation_strategy });
+    hashes.add(publicationHashInput(input, null));
+  }
+  assert.equal(hashes.size, 3);
+  for (const trial_params of [null, {}, true, "MANUAL", { graduation_strategy: "AUTO" }, { graduation_strategy: "MANUAL", extra: true }]) {
+    assert.equal(publicationSchema.safeParse({ account_id, video_url, trial_params }).success, false);
+  }
+  for (const media of [
+    { media_type: "IMAGE", image_url: "https://8.8.8.8/photo.jpg" },
+    { media_type: "STORIES", video_url },
+    { media_type: "CAROUSEL", items: Array(2).fill({ media_type: "VIDEO", url: video_url }) },
+  ]) assert.equal(publicationSchema.safeParse({ account_id, ...media, trial_params: { graduation_strategy: "MANUAL" } }).success, false);
+  assert.equal(publicationHashInput(publicationSchema.parse({ account_id, video_url, media_type: "REELS" }), null), ordinaryHash);
+});
+
+test("Graph encodes Trial Reels as JSON and omits the option for ordinary publishing", async () => {
+  const forms: URLSearchParams[] = [];
+  const meta = publishingMeta(async (_url, init) => {
+    forms.push(new URLSearchParams(init!.body as URLSearchParams));
+    return Response.json({ id: "99001" });
+  });
+  for (const graduation_strategy of ["MANUAL", "SS_PERFORMANCE"] as const) {
+    await meta.create("123", "https://example.com/video.mp4", "Caption", true, "secret", undefined, { trial_params: { graduation_strategy } });
+  }
+  await meta.create("123", "https://example.com/video.mp4", "Caption", true, "secret");
+  assert.deepEqual(JSON.parse(forms[0]!.get("trial_params")!), { graduation_strategy: "MANUAL" });
+  assert.deepEqual(JSON.parse(forms[1]!.get("trial_params")!), { graduation_strategy: "SS_PERFORMANCE" });
+  assert.equal(forms[2]!.has("trial_params"), false);
+});

@@ -1,4 +1,4 @@
-import type { PublicationItem } from "./input";
+import type { PublicationItem, TrialParams } from "./input";
 
 export class PublishingMetaError extends Error {
   constructor(
@@ -11,7 +11,7 @@ export class PublishingMetaError extends Error {
 }
 // Publishing can take longer than a metadata read. Keep it inside the worker lease.
 export const PUBLISH_TIMEOUT_MS = 60_000;
-export type PublishingOptions = { alt_text?: string; thumb_offset?: number; is_ai_generated?: boolean };
+export type PublishingOptions = { alt_text?: string; thumb_offset?: number; is_ai_generated?: boolean; trial_params?: TrialParams };
 export interface PublishingMeta {
   create(
     account: string,
@@ -107,7 +107,7 @@ export function publishingMeta(
       throw new PublishingMetaError("meta_missing_id", true, publishing);
     return data.id;
   };
-  const optionsForm = (o: PublishingOptions = {}) => Object.fromEntries(Object.entries(o).map(([k,v])=>[k,String(v)]));
+  const optionsForm = (o: PublishingOptions = {}) => Object.fromEntries(Object.entries(o).map(([k,v])=>[k,typeof v === "object" ? JSON.stringify(v) : String(v)]));
   return {
     async createImage(account, image, caption, token, options) {
       return id(await call(`${account}/media`, token, { image_url: image, caption, ...optionsForm(options) }));

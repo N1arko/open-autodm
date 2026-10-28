@@ -9,7 +9,7 @@ export async function GET() {
       db.from("instagram_events").select("id").limit(0),
       db.from("instagram_materials").select("id").limit(0),
       db.from("bot_transport_jobs").select("id").limit(0),
-      db.from("instagram_publications").select("id,media_type,items,child_container_ids,first_comment_operation_id,revision").limit(0),
+      db.from("instagram_publications").select("id,media_type,items,child_container_ids,first_comment_operation_id,revision,trial_params").limit(0),
       db.from("instagram_insights_snapshots").select("id").limit(0),
       db.from("instagram_insights_settings").select("account_id").limit(0),
     ]);

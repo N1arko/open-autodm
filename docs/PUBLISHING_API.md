@@ -142,3 +142,47 @@ response before retrying. Source changes require cancellation and a new owner-au
 
 Private materials upload, typed comment operations, ownership checks, unknown reconciliation,
 limits and complete examples: [INSTAGRAM_AGENT_API.md](INSTAGRAM_AGENT_API.md).
+
+## Пробные Reels (Trial Reels)
+
+`POST /api/v1/publications` принимает необязательный `trial_params` только для `REELS`.
+Meta сначала показывает пробный ролик людям, которые не подписаны на аккаунт.
+Режим перехода в обычный Reel указывается явно:
+
+- `MANUAL` — владелец переводит ролик в обычный режим через приложение Instagram;
+- `SS_PERFORMANCE` — Meta автоматически переводит ролик при хороших результатах.
+
+```json
+{
+  "account_id": "<internal Instagram UUID>",
+  "media_type": "REELS",
+  "video_url": "https://cdn.example.com/trial.mp4",
+  "caption": "Новый вариант ролика",
+  "trial_params": { "graduation_strategy": "MANUAL" },
+  "publish_at": "2026-11-01T18:00:00-03:00"
+}
+```
+
+Отсутствие `trial_params` сохраняет обычную публикацию Reels и прежний request hash.
+Для пробного ролика `graduation_strategy` обязателен; значения по умолчанию нет.
+Пустой объект, `null`, неизвестная стратегия, лишние поля и `trial_params` для IMAGE,
+CAROUSEL или STORIES возвращают `400 invalid_body`. Проверка в базе дополнительно
+ограничивает форму параметра и тип медиа.
+
+Ответы создания, списка, чтения, отмены и workflow содержат `trial_params` (null для
+обычных и старых заданий). Параметр сохраняется в очереди, входит в idempotency hash
+и передаётся Meta как JSON при создании контейнера после наступления срока. Смена
+стратегии либо удаление параметра с прежним ключом даёт `409 idempotency_conflict`.
+PATCH задания сохраняет режим; для его смены отмените ещё не начатое задание и
+создайте новое с новым ключом в рамках поручения владельца.
+
+Расписание, обложка, первый комментарий, retries и `publication_unknown` работают
+по общему контракту. Автоматического повторения неизвестной публикации нет.
+Перевод уже опубликованного пробного Reel в обычный через API сервиса не добавлен.
+Доступность Trial Reels для конкретного аккаунта определяет Meta. Ответ `202`
+подтверждает сохранение задания; поддержка режима аккаунтом подтверждается при
+его выполнении. Публикационное разрешение — `instagram_business_content_publish`.
+
+Перед выпуском примените `20261028000002_trial_reels.sql` и согласованно обновите app
+и worker. Исторические задания получают null без изменения существующих полей.
+Источник: [официальный publishing guide Meta, Trial Reels](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/content-publishing/).
