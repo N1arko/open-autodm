@@ -1,10 +1,19 @@
 import type { PublicationItem, TrialParams } from "./input";
+import { providerDetails, type ProviderDetails } from "./diagnostics";
+
+export interface PublishingProviderError {
+  http_status: number;
+  code: number;
+  subcode?: number;
+  details?: ProviderDetails;
+}
 
 export class PublishingMetaError extends Error {
   constructor(
     public code: string,
     public retryable: boolean,
     public uncertain = false,
+    public providerError?: PublishingProviderError,
   ) {
     super(code);
   }
@@ -87,7 +96,7 @@ export function publishingMeta(
     }
     if (!response.ok || data.error) {
       const error = data.error as
-        { code?: number; is_transient?: boolean } | undefined;
+        { code?: number; error_subcode?: number; is_transient?: boolean } | undefined;
       const code = Number.isInteger(error?.code) ? error!.code : 0;
       const rejected =
         response.status >= 400 && response.status < 500 && !!error;
@@ -98,6 +107,9 @@ export function publishingMeta(
           !!error?.is_transient ||
           [4, 17, 32, 613].includes(code!),
         publishing && !rejected,
+        { http_status: response.status, code: code!,
+          ...(Number.isInteger(error?.error_subcode) ? { subcode: error!.error_subcode } : {}),
+          details: providerDetails(error, token) },
       );
     }
     return data;

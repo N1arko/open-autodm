@@ -201,3 +201,5 @@ See [LICENSE](LICENSE).
 Built with ❤️ by <a href="https://www.instagram.com/buildwharsha/"><b>@buildwharsha</b></a> - say hi on Instagram
 
 </div>
+
+Диагностика отказов публикации доступна владельцу в `provider_error`: очищенное пояснение Meta и подкод; см. [контракт публикаций](docs/PUBLISHING_API.md#диагностика-отказов-meta).

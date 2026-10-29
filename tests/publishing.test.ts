@@ -187,3 +187,26 @@ test("Graph encodes Trial Reels as JSON and omits the option for ordinary publis
   assert.deepEqual(JSON.parse(forms[1]!.get("trial_params")!), { graduation_strategy: "SS_PERFORMANCE" });
   assert.equal(forms[2]!.has("trial_params"), false);
 });
+
+
+test("publishing retains bounded provider diagnostics and redacts credentials and URLs", async () => {
+  const token = "private-meta-credential";
+  const meta = publishingMeta(async () => Response.json({ error: {
+    code: 10, error_subcode: 2207079, message: `Trial unavailable ${token} https://example.com/private?access_token=hidden`,
+    error_user_title: "<b>Account unavailable</b>", error_user_msg: "authorization=hidden\n" + "x".repeat(2000),
+    unrelated: "must not escape", access_token: token,
+  } }, { status: 400 }));
+  await assert.rejects(meta.create("123", "https://example.com/video.mp4", "", true, token, undefined,
+    { trial_params: { graduation_strategy: "MANUAL" } }), (error) => {
+      assert.ok(error instanceof PublishingMetaError);
+      assert.equal(error.code, "meta_http_400_code_10");
+      assert.equal(error.retryable, false);
+      assert.equal(error.uncertain, false);
+      assert.deepEqual(Object.keys(error.providerError!).sort(), ["code", "details", "http_status", "subcode"]);
+      assert.equal(error.providerError!.subcode, 2207079);
+      const text = JSON.stringify(error.providerError);
+      for (const secret of [token, "https://", "hidden", "must not escape", "<b>"]) assert.ok(!text.includes(secret));
+      assert.ok(error.providerError!.details!.user_message!.length <= 1000);
+      return true;
+    });
+});

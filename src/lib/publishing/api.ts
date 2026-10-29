@@ -15,7 +15,7 @@ export { publicationSchema } from "./input";
 export { validateVideoUrl } from "./url";
 
 const visible =
-  "id,account_id,media_type,video_url,image_url,items,cover_url,caption,alt_text,thumb_offset,is_ai_generated,trial_params,first_comment,first_comment_operation_id,revision,share_to_feed,publish_at,status,container_id,media_id,permalink,error_code,attempts,created_at,updated_at,published_at";
+  "id,account_id,media_type,video_url,image_url,items,cover_url,caption,alt_text,thumb_offset,is_ai_generated,trial_params,first_comment,first_comment_operation_id,revision,share_to_feed,publish_at,status,container_id,media_id,permalink,error_code,provider_error,attempts,created_at,updated_at,published_at";
 export function publicPublication(row: Record<string, unknown>) {
   return Object.fromEntries(visible.split(",").map((k) => [k, row[k]]));
 }

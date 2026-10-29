@@ -109,6 +109,12 @@ before(async () => {
     const path = new URL(request.url!, metaBase).pathname;
     if (request.method === "POST" && path.endsWith("/media")) {
       const form = new URLSearchParams(await body(request));
+      if (mode === "trial-rejected") {
+        json(response, { error: { code: 10, error_subcode: 2207079,
+          message: "Trial Reels is not available for this account. fake-meta-token",
+          error_user_title: "Trial not available" } }, 400);
+        return;
+      }
       if (mode === "formats") {
         formatForms.push(form);
         created++;
@@ -763,4 +769,26 @@ test("Trial Reel keeps the first-comment dependency bound to its confirmed media
   assert.equal((operations[0]!.input as { media_id: string }).media_id, "123456");
   assert.equal(await queued({ trial_params: { graduation_strategy: "MANUAL" }, first_comment: "After the Trial Reel publishes" }), id);
   assert.equal((await db.pool.query("SELECT count(*) FROM instagram_operations WHERE publication_id=$1", [id])).rows[0].count, "1");
+});
+
+
+test("Trial rejection diagnostics survive fenced finish and are readable only by the owner", async () => {
+  mode = "trial-rejected";
+  const id = await queued({ trial_params: { graduation_strategy: "MANUAL" } });
+  await tick();
+  const p = await row(id);
+  assert.equal(p.status, "failed");
+  assert.equal(p.media_id, null);
+  assert.equal(p.container_id, null);
+  assert.equal(p.error_code, "meta_http_400_code_10");
+  assert.equal(p.provider_error.code, 10);
+  assert.equal(p.provider_error.subcode, 2207079);
+  assert.equal(published, 0);
+  assert.ok(!JSON.stringify(p.provider_error).includes("fake-meta-token"));
+  assert.equal(await db.store.rpc("publishing_finish", {p_id:id,p_token:randomUUID(),p_state:"failed",p_provider_error:{code:999}}), false);
+  assert.deepEqual((await row(id)).provider_error, p.provider_error);
+  const response = await getPublication(id)(req("GET"));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).provider_error, p.provider_error);
+  assert.equal((await getPublication(id)(req("GET",undefined,"other-token"))).status,404);
 });

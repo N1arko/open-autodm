@@ -139,7 +139,7 @@ The worker serializes publication work for each account and uses expiring claims
 
 The publish request allows up to 60 seconds for Meta's acknowledgement; the worker checks that its two-minute lease has enough time remaining for the request and result persistence. Metadata reads and container requests retain 20-second deadlines. If the publish result remains uncertain, inspect the live account and confirm the exact media, caption and time before an administrator reconciles the record; never resubmit blindly.
 
-The media ID is stored before permalink lookup. A temporary permalink failure retries only that read, up to eight attempts; `published` can therefore have `permalink:null` with a known `media_id`. Processing stops after 120 attempts or 23 hours past the requested time. Failures are exposed as sanitized error codes; access tokens, captions and video URLs are not logged by the publishing worker. History is retained until the account or owner is removed.
+The media ID is stored before permalink lookup. A temporary permalink failure retries only that read, up to eight attempts; `published` can therefore have `permalink:null` with a known `media_id`. Processing stops after 120 attempts or 23 hours past the requested time. Failures are exposed as sanitized error codes and optional `provider_error`; access tokens, captions and video URLs are not logged by the publishing worker. History is retained until the account or owner is removed.
 
 An agent should translate the user's timezone into an explicit offset, submit once, retain the returned job ID, then read status until `published`, `failed`, `cancelled` or `publication_unknown`. Request handling does not wait for Instagram processing. Notifications or recurring content generation are external agent responsibilities.
 
@@ -212,3 +212,19 @@ Meta этот API не определяет; `published` подтверждае�
 Перед выпуском примените `20261028000002_trial_reels.sql` и согласованно обновите app
 и worker. Исторические задания получают null без изменения существующих полей.
 Источник: [официальный publishing guide Meta, Trial Reels](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/content-publishing/).
+
+
+## Диагностика отказов Meta
+
+После миграции `20261029000001_publishing_provider_errors.sql` создание, чтение, список
+и workflow возвращают `provider_error` (null для прежних заданий). При отказе worker
+сохраняет `http_status`, `code`, необязательный `subcode` и `details` с разрешёнными
+полями `message,user_title,user_message`. Тексты очищаются от токенов, URL, HTML и
+управляющих символов, ограничены 1000 символами на поле. Сырые ответы Meta не сохраняются.
+`error_code` и правила retries/unknown остаются прежними. Диагностика относится к
+последнему завершённому шагу; успешный следующий шаг очищает её. Историческую причину
+отказа, которую прежний worker отбросил, восстановить через API невозможно.
+
+Миграция сохраняет прежние RPC-вызовы и fencing: чужой/потерянный claim не изменит
+диагностику. Обновите app и worker согласованно после миграции. Наличие publishing
+permission и успешных обычных Reels само по себе не подтверждает доступность Trial.

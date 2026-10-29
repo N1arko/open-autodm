@@ -149,6 +149,7 @@ async function run(
       const meta = error instanceof PublishingMetaError ? error : null;
       await finish(meta?.retryable ? "processing" : "failed", {
         p_error: meta?.code ?? urlError,
+        p_provider_error: meta?.providerError ?? null,
         p_delay: Math.min(900, 15 * 2 ** Math.min(p.attempts, 6)),
       });
       return;
@@ -168,6 +169,7 @@ async function run(
     const meta = error instanceof PublishingMetaError ? error : null;
     await finish(meta && !meta.retryable ? "failed" : "processing", {
       p_error: meta?.code ?? "meta_status_unavailable",
+      p_provider_error: meta?.providerError ?? null,
       p_delay: 60,
     });
     return;
@@ -225,6 +227,7 @@ async function run(
           : "failed",
       {
         p_error: meta?.code ?? "meta_publish_outcome_unknown",
+        p_provider_error: meta?.providerError ?? null,
         p_delay: 900,
       },
     );
