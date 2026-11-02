@@ -205,3 +205,16 @@ app/worker runtime `1e7931a`, миграция `20261028000002_trial_reels.sql`.
 примените миграцию и обновите app/worker одним образом. Health проверяет новую колонку.
 Убедитесь, что API возвращает null у исторических jobs и очищенную диагностику нового
 отказа. Не воспроизводите неопределённую публикацию; проверяйте её фактический результат.
+
+## Реклама существующих Instagram Reels и posts
+
+2 ноября 2026 app/worker обновлены до runtime `9f75e68` из полной актуальной ветки,
+с сохранением publishing/Trial/Instagram Agent API выпуска `ce46e2f`. Поддержан
+профильный existing-post creative, точная source identity и контекстная validation;
+включены подготовленные ранее рекламная диагностика и usage/backoff. Новых миграций
+и runtime env нет. До перезапуска сохранены source/env/image и проверенный backup public;
+worker остановлен и запущен согласованно с app.
+
+Проверены именно публичные production endpoints и exact source/adset через validate_only,
+параметры рекламы обоих кабинетов и все 65 публикаций с их историческими результатами.
+[Версия, image, проверки, audit findings и откат](releases/2026-11-02-existing-post-profile-ads.md).
