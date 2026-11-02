@@ -212,3 +212,66 @@ test("profile actions use canonical promoted identity and explicit contextual CT
     false,
   );
 });
+
+test("existing Reel profile CTA requires explicit Page, owner and adset while preserving generic existing-post compatibility", () => {
+  const creative = {
+    kind: "instagram_post",
+    page_id: "700",
+    instagram_user_id: "900",
+    source_instagram_media_id: "902",
+    link: "https://www.instagram.com/fixture/",
+    call_to_action: "VIEW_INSTAGRAM_PROFILE",
+  };
+  const value = {
+    action: "creative.create",
+    params: { name: "existing Reel", validation_adset_id: "200", creative },
+  };
+  const parsed = actionInput.parse(value),
+    params = paramsFor(parsed);
+  assert.equal(params.source_instagram_media_id, "902");
+  assert.equal(params.instagram_user_id, "900");
+  assert.deepEqual(params.call_to_action, {
+    type: "VIEW_INSTAGRAM_PROFILE",
+    value: { link: creative.link },
+  });
+  assert.equal("object_story_spec" in params, false);
+  assert.equal("validation_adset_id" in params, false);
+  for (const field of [
+    "page_id",
+    "instagram_user_id",
+    "source_instagram_media_id",
+    "link",
+  ]) {
+    assert.equal(
+      actionInput.safeParse({
+        ...value,
+        params: {
+          ...value.params,
+          creative: { ...creative, [field]: undefined },
+        },
+      }).success,
+      false,
+    );
+  }
+  assert.equal(
+    actionInput.safeParse({
+      ...value,
+      params: { ...value.params, validation_adset_id: undefined },
+    }).success,
+    false,
+  );
+  assert.equal(
+    actionInput.safeParse({
+      action: "creative.create",
+      params: {
+        name: "legacy existing post",
+        creative: {
+          kind: "instagram_post",
+          source_instagram_media_id: "902",
+          instagram_user_id: "900",
+        },
+      },
+    }).success,
+    true,
+  );
+});

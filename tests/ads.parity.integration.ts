@@ -44,6 +44,8 @@ let posts: { path: string; params: Record<string, string> }[],
   pageVisible: boolean,
   campaignObjective: string,
   visibleImages: string[],
+  sourceMedia: Record<string, unknown>,
+  createdObjects: Record<string, Record<string, unknown>>,
   group: Record<string, unknown>;
 const ports = (): ManagePorts => ({
   store: db.store,
@@ -157,9 +159,31 @@ before(async () => {
         return json(res, { error: { code: 4 } }, 429);
       }
       if (params.execution_options) return json(res, { success: true });
+      if (createdObjects[path]) {
+        Object.assign(createdObjects[path], params);
+        return json(res, { success: true });
+      }
       if (path.endsWith("adimages")) {
         assert.deepEqual(Buffer.from(params.bytes!, "base64"), image);
         return json(res, { images: { file: { hash, width: 1, height: 1 } } });
+      }
+      if (path.endsWith("/adcreatives"))
+        createdObjects["401"] = {
+          id: "401",
+          account_id: "123",
+          object_type: params.source_instagram_media_id ? "VIDEO" : "SHARE",
+          ...params,
+        };
+      if (path.endsWith("/ads")) {
+        createdObjects["501"] = {
+          id: "501",
+          account_id: "123",
+          adset_id: params.adset_id,
+          campaign_id: "100",
+          status: params.status,
+          creative: { id: JSON.parse(params.creative!).creative_id },
+        };
+        return json(res, { id: "501" });
       }
       return json(res, { id: "401" });
     }
@@ -167,6 +191,7 @@ before(async () => {
       res.setHeader("Retry-After", "120");
       return json(res, { error: { code: 4 } }, 429);
     }
+    if (createdObjects[path]) return json(res, createdObjects[path]);
     if (path === "100")
       return json(res, {
         id: "100",
@@ -224,6 +249,11 @@ before(async () => {
       return json(res, {
         data: [{ id: "902", caption: "fixture caption", media_type: "IMAGE" }],
       });
+    if (path === "902") {
+      if (mode === "media-denied")
+        return json(res, { error: { code: 200, error_subcode: 42 } }, 403);
+      return json(res, sourceMedia);
+    }
     if (path.endsWith("promote_pages"))
       return json(res, {
         data: pageVisible ? [{ id: "700", name: "Page" }] : [],
@@ -270,6 +300,16 @@ beforeEach(async () => {
   pageVisible = true;
   campaignObjective = "OUTCOME_ENGAGEMENT";
   visibleImages = [hash];
+  sourceMedia = {
+    id: "902",
+    owner: { id: "900" },
+    media_type: "VIDEO",
+    media_product_type: "REELS",
+    permalink: "https://www.instagram.com/reel/fixture/",
+    timestamp: "2026-11-02T11:01:25+0000",
+    caption: "original caption ⟡",
+  };
+  createdObjects = {};
   group = {
     id: "200",
     account_id: "123",
@@ -1010,4 +1050,286 @@ test("one plan deduplicates exact object and library-page reads; every execution
     readPaths.filter((path) => path.endsWith("/adimages")).length,
     1,
   );
+});
+
+const existingProfilePost = () => ({
+  action: "creative.create",
+  params: {
+    name: "Existing profile Reel",
+    validation_adset_id: "200",
+    creative: {
+      kind: "instagram_post",
+      page_id: "700",
+      instagram_user_id: "900",
+      source_instagram_media_id: "902",
+      link: "https://www.instagram.com/fixture/",
+      call_to_action: "VIEW_INSTAGRAM_PROFILE",
+      contextual_multi_ads: { enroll_status: "OPT_OUT" },
+    },
+  },
+});
+
+test("existing Reel profile flow preserves the original source, verifies context twice and replays one durable write", async () => {
+  profileGroup();
+  const input = existingProfilePost();
+  const checked = await validateAction(connection, ports)(req(input));
+  assert.equal(
+    checked.status,
+    200,
+    JSON.stringify(await checked.clone().json()),
+  );
+  const plan = await checked.json();
+  assert.equal(plan.validation.adset_compatibility, "validated");
+  assert.equal(plan.dependencies["instagram_media:902"].owner, "900");
+  assert.equal(
+    plan.dependencies["instagram_media:902"].media_product_type,
+    "REELS",
+  );
+  assert.equal("caption" in plan.dependencies["instagram_media:902"], false);
+  assert.equal(
+    plan.dependencies["instagram_media:902"].caption_hash.length,
+    64,
+  );
+  const stableKey = randomUUID();
+  const prepared = await prepareAction(
+    connection,
+    ports,
+  )(req(input, "owner", "POST", "", stableKey));
+  assert.equal(prepared.status, 201);
+  const o = await prepared.json();
+  assert.equal(
+    (
+      await prepareAction(
+        connection,
+        ports,
+      )(req(input, "owner", "POST", "", stableKey))
+    ).status,
+    200,
+  );
+  const badHash = await executeAction(
+    connection,
+    o.id,
+    ports,
+  )(req({ plan_hash: "0".repeat(64) }));
+  assert.equal(badHash.status, 409);
+  assert.equal((await execute(o)).status, 200);
+  const count = posts.length;
+  assert.equal((await execute(o)).status, 200);
+  assert.equal(posts.length, count);
+  const writes = posts.filter((p) => !p.params.execution_options);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0]!.path, "act_123/adcreatives");
+  for (const post of posts) {
+    assert(!["902", "900/media", "700/feed"].includes(post.path));
+    const creative = post.path.endsWith("/ads")
+      ? JSON.parse(post.params.creative!)
+      : post.params;
+    assert.equal(creative.source_instagram_media_id, "902");
+    assert.equal(creative.instagram_user_id, "900");
+    const cta =
+      typeof creative.call_to_action === "string"
+        ? JSON.parse(creative.call_to_action)
+        : creative.call_to_action;
+    assert.equal(cta.type, "VIEW_INSTAGRAM_PROFILE");
+    assert.equal("page_id" in creative, false);
+    assert.equal("message" in creative, false);
+    assert.equal("video_id" in creative, false);
+    assert.equal("object_story_spec" in creative, false);
+    if (post.path.endsWith("/ads")) assert.equal(post.params.status, "PAUSED");
+  }
+  const ad = {
+    action: "ad.create",
+    params: {
+      name: "Paused existing post ad",
+      adset_id: "200",
+      creative_id: "401",
+    },
+  };
+  const paused = await prepare(ad);
+  const result = await execute(paused);
+  assert.equal(result.status, 200);
+  const created = posts.filter(
+    (p) => p.path === "act_123/ads" && !p.params.execution_options,
+  );
+  assert.equal(created.length, 1);
+  assert.equal(created[0]!.params.status, "PAUSED");
+  assert.equal(JSON.parse(created[0]!.params.creative!).creative_id, "401");
+  assert.equal(createdObjects["501"]!.status, "PAUSED");
+  const activation = {
+    action: "ad.update",
+    object_id: "501",
+    params: { status: "ACTIVE" },
+  };
+  assert.equal(
+    (await validateAction(connection, ports)(req(activation))).status,
+    200,
+  );
+  const activePlan = await prepare(activation);
+  assert.equal((await execute(activePlan)).status, 409);
+  assert.equal(createdObjects["501"]!.status, "PAUSED");
+  assert.equal(
+    (
+      await executeAction(
+        connection,
+        activePlan.id,
+        ports,
+      )(req({ plan_hash: activePlan.plan_hash, confirm_spend: true }))
+    ).status,
+    200,
+  );
+  assert.equal(createdObjects["501"]!.status, "ACTIVE");
+});
+
+test("existing FEED image/video/carousel use the unchanged source; unsupported products and mismatched owner fail before validation", async () => {
+  profileGroup();
+  for (const [product, type] of [
+    ["REELS", "VIDEO"],
+    ["FEED", "IMAGE"],
+    ["FEED", "VIDEO"],
+    ["FEED", "CAROUSEL_ALBUM"],
+  ]) {
+    sourceMedia = {
+      ...sourceMedia,
+      media_product_type: product,
+      media_type: type,
+    };
+    assert.equal(
+      (await validateAction(connection, ports)(req(existingProfilePost())))
+        .status,
+      200,
+    );
+  }
+  for (const [field, value, error] of [
+    ["owner", { id: "999" }, "instagram_post_owner_mismatch"],
+    ["media_product_type", "STORY", "unsupported_instagram_post_format"],
+    ["media_product_type", "LIVE", "unsupported_instagram_post_format"],
+    ["media_type", "IMAGE", "unsupported_instagram_post_format"],
+  ] as const) {
+    sourceMedia = {
+      id: "902",
+      owner: { id: "900" },
+      media_type: "VIDEO",
+      media_product_type: "REELS",
+      permalink: "https://www.instagram.com/reel/fixture/",
+      timestamp: "2026-11-02T11:01:25+0000",
+      [field]: value,
+    };
+    posts = [];
+    const r = await validateAction(
+      connection,
+      ports,
+    )(req(existingProfilePost()));
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).error, error);
+    assert.equal(posts.length, 0);
+  }
+  sourceMedia = { ...sourceMedia, media_type: "VIDEO" };
+  mode = "media-denied";
+  const denied = await validateAction(
+    connection,
+    ports,
+  )(req(existingProfilePost()));
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).provider_code, 200);
+  assert.equal(posts.length, 0);
+});
+
+test("existing post dependencies and Meta compatibility are rechecked before execute; uncertain writes never replay", async () => {
+  profileGroup();
+  for (const field of ["caption", "owner", "media_product_type"]) {
+    sourceMedia = {
+      id: "902",
+      owner: { id: "900" },
+      media_type: "VIDEO",
+      media_product_type: "REELS",
+      permalink: "https://www.instagram.com/reel/fixture/",
+      timestamp: "2026-11-02T11:01:25+0000",
+      caption: "original",
+    };
+    const o = await prepare(existingProfilePost());
+    posts = [];
+    sourceMedia = {
+      ...sourceMedia,
+      [field]:
+        field === "caption"
+          ? "edited"
+          : field === "owner"
+            ? { id: "999" }
+            : "STORY",
+    };
+    const r = await execute(o);
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).state, "cancelled");
+    assert.equal(posts.filter((p) => !p.params.execution_options).length, 0);
+  }
+  sourceMedia = {
+    id: "902",
+    owner: { id: "900" },
+    media_type: "VIDEO",
+    media_product_type: "REELS",
+    permalink: "https://www.instagram.com/reel/fixture/",
+    timestamp: "2026-11-02T11:01:25+0000",
+  };
+  const o = await prepare(existingProfilePost());
+  posts = [];
+  mode = "profile-ad-rejected";
+  const rejected = await execute(o);
+  assert.equal(rejected.status, 502);
+  assert.equal(posts.filter((p) => !p.params.execution_options).length, 0);
+  mode = "ok";
+  const uncertain = await prepare(existingProfilePost());
+  posts = [];
+  const p = ports(),
+    send = p.writer.mutate;
+  p.writer.mutate = async (account, token, action, validate = false) => {
+    if (!validate) {
+      mode = "uncertain";
+      try {
+        return await send(account, token, action, validate);
+      } finally {
+        mode = "ok";
+      }
+    }
+    return send(account, token, action, validate);
+  };
+  const r = await executeAction(
+    connection,
+    uncertain.id,
+    () => p,
+  )(req({ plan_hash: uncertain.plan_hash }));
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).state, "uncertain");
+  const count = posts.length;
+  assert.equal((await execute(uncertain)).status, 409);
+  assert.equal(posts.length, count);
+  assert.equal(posts.filter((p) => !p.params.execution_options).length, 1);
+});
+
+test("existing post Page, identity, ad account and adset objective mismatches cannot authorize creation", async () => {
+  profileGroup();
+  for (const variant of [
+    "page",
+    "instagram",
+    "account",
+    "objective",
+    "owner",
+  ]) {
+    const input = existingProfilePost();
+    if (variant === "page") input.params.creative.page_id = "701";
+    if (variant === "instagram")
+      input.params.creative.instagram_user_id = "999";
+    if (variant === "account") group = { ...group, account_id: "456" };
+    if (variant === "objective") campaignObjective = "OUTCOME_ENGAGEMENT";
+    const r = await prepareAction(
+      connection,
+      ports,
+    )(req(input, variant === "owner" ? "other" : "owner"));
+    assert.equal(
+      r.status,
+      variant === "account" || variant === "owner" ? 404 : 409,
+    );
+    assert.equal(posts.length, 0);
+    group = { ...group, account_id: "123" };
+    profileGroup();
+  }
 });

@@ -38,6 +38,7 @@ $25/month tools, and new features land here regularly. **Watch** the repo to cat
 | Reels, фото, карусели, Stories, расписание, обложка и первый комментарий | [Публикации](docs/PUBLISHING_API.md) |
 | Пробные / тестовые Reels с явной стратегией перехода | [Trial Reels](docs/PUBLISHING_API.md#пробные-reels-trial-reels) |
 | Статистика Instagram и наблюдения | [Insights](docs/INSIGHTS_API.md) |
+| Продвинуть опубликованный Instagram Reel/FEED post на посещения профиля | [Existing-post реклама](docs/ADS_EXISTING_POSTS.md) |
 | Рекламные кабинеты и отчёты | [Чтение рекламы](docs/ADS_API.md) |
 | Рекламные подписки, посещения профиля, стоимость и дневная динамика | [Результаты рекламы](docs/ADS_REPORTING_API.md) |
 | Кампании, объявления, бюджеты и targeting | [Управление рекламой](docs/ADS_MANAGEMENT_API.md) |

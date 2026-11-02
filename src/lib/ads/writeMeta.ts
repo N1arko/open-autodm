@@ -333,6 +333,27 @@ export function writeMeta(
       if (!rows.success) throw new WriteMetaError("meta_invalid_response");
       return { data: rows.data, next_cursor: cursorFor(data) };
     },
+    async instagramMedia(mediaId: string, token: string) {
+      const parsed = z
+        .object({
+          id: metaId,
+          owner: z.object({ id: metaId }),
+          media_type: z.enum(["IMAGE", "VIDEO", "CAROUSEL_ALBUM"]),
+          media_product_type: z.string().max(100),
+          permalink: z.string().max(2048),
+          timestamp: z.string().max(100),
+          caption: z.string().max(10000).optional(),
+        })
+        .safeParse(
+          await call(id(mediaId), token, {
+            fields:
+              "id,owner{id},media_type,media_product_type,permalink,timestamp,caption",
+          }),
+        );
+      if (!parsed.success || parsed.data.id !== mediaId)
+        throw new WriteMetaError("meta_invalid_response");
+      return parsed.data;
+    },
     async targetingSearch(
       account: string,
       token: string,

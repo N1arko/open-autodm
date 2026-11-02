@@ -151,6 +151,7 @@ const creative = z.discriminatedUnion("kind", [
       kind: z.literal("instagram_post"),
       source_instagram_media_id: metaId,
       instagram_user_id: metaId,
+      page_id: metaId.optional(),
       link: url.optional(),
       call_to_action: cta.optional(),
       ...creativeControls,
@@ -375,7 +376,10 @@ export const actionInput = z
         c.call_to_action === "VIEW_INSTAGRAM_PROFILE" &&
         (!v.params.validation_adset_id ||
           !c.instagram_user_id ||
-          (c.kind !== "image" && c.kind !== "video") ||
+          !c.page_id ||
+          (c.kind !== "image" &&
+            c.kind !== "video" &&
+            c.kind !== "instagram_post") ||
           !c.link)
       )
         ctx.addIssue({

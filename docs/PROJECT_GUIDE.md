@@ -16,6 +16,7 @@ Open-autoDM объединяет Direct, комментарии, обычные 
 | Подключить рекламный кабинет, читать кампании, расходы и результаты | [ADS_API.md](ADS_API.md) | `src/lib/ads/service.ts`, `src/lib/ads/queries.ts`, `src/lib/ads/meta.ts` |
 | Получить рекламные подписки/посещения профиля, стоимость результата и дневную динамику | [ADS_REPORTING_API.md](ADS_REPORTING_API.md) | `src/lib/ads/report.ts`, `src/lib/ads/meta.ts`, `src/lib/ads/queries.ts` |
 | Создать/остановить рекламу, изменить бюджет, аудиторию или creative | [ADS_MANAGEMENT_API.md](ADS_MANAGEMENT_API.md) | `src/lib/ads/manage.ts`, `src/lib/ads/actions.ts`, `src/lib/ads/writeMeta.ts` |
+| Продвинуть существующий Instagram Reel/FEED post с сохранением source media | [ADS_EXISTING_POSTS.md](ADS_EXISTING_POSTS.md) | `src/lib/ads/actions.ts`, `src/lib/ads/manage.ts`, `src/lib/ads/writeMeta.ts` |
 | Проверить рекламу на посещения профиля Instagram и причины Meta validation отказов | [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md#посещения-профиля-instagram) | `src/lib/ads/manage.ts`, `src/lib/ads/actions.ts`, `src/lib/ads/diagnostics.ts` |
 | Разобрать лимиты Meta, оценку задержки и повторные чтения зависимостей | [ADS_RATE_LIMITS.md](ADS_RATE_LIMITS.md) | `src/lib/ads/rateLimit.ts`, `src/lib/ads/meta.ts`, `src/lib/ads/manage.ts` |
 | Найти город/интерес, загрузить локальную картинку, выбрать Direct-шаблон и варианты для размещений | [ADS_CREATIVE_API.md](ADS_CREATIVE_API.md) | `src/lib/ads/creative.ts`, `src/lib/ads/discovery.ts`, `src/lib/ads/uploads.ts`, `src/lib/ads/templates.ts` |

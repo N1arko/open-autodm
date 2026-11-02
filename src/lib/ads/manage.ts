@@ -252,9 +252,12 @@ async function plan(
           group.destination_type !== "INSTAGRAM_PROFILE" ||
           group.optimization_goal !== "PROFILE_VISIT" ||
           group.billing_event !== "IMPRESSIONS" ||
-          (c.kind !== "image" && c.kind !== "video") ||
+          (c.kind !== "image" &&
+            c.kind !== "video" &&
+            c.kind !== "instagram_post") ||
           c.call_to_action !== "VIEW_INSTAGRAM_PROFILE" ||
           !c.instagram_user_id ||
+          !c.page_id ||
           !c.link ||
           group.promoted_object?.page_id !== c.page_id
         )
@@ -287,6 +290,32 @@ async function plan(
           id: profile.id,
           username: profile.username,
         };
+        if (c.kind === "instagram_post") {
+          const media = await p.writer.instagramMedia(
+            c.source_instagram_media_id,
+            access,
+          );
+          if (media.owner.id !== c.instagram_user_id)
+            throw new ApiError(409, "instagram_post_owner_mismatch");
+          if (
+            !(
+              (media.media_product_type === "REELS" &&
+                media.media_type === "VIDEO") ||
+              (media.media_product_type === "FEED" &&
+                ["IMAGE", "VIDEO", "CAROUSEL_ALBUM"].includes(media.media_type))
+            )
+          )
+            throw new ApiError(409, "unsupported_instagram_post_format");
+          deps[`instagram_media:${media.id}`] = {
+            id: media.id,
+            owner: media.owner.id,
+            media_type: media.media_type,
+            media_product_type: media.media_product_type,
+            permalink: media.permalink,
+            timestamp: media.timestamp,
+            caption_hash: hash(media.caption ?? ""),
+          };
+        }
       }
       validateInstagramCreative = true;
     }
